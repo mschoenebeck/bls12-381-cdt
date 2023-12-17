@@ -201,7 +201,7 @@ namespace bls12_381
         {
             return *reinterpret_cast<uint64_t*>(&this->w0 + i * sizeof(uint64_t));
         }
-        static fp fromRawBytesLE(const std::span<const uint8_t, 6 * sizeof(uint64_t)>& in)
+        static fp fromBytesLE(const std::span<const uint8_t, 6 * sizeof(uint64_t)>& in)
         {
             fp out;
             memcpy(out.data(), in.data(), 6 * sizeof(uint64_t));
@@ -273,7 +273,7 @@ namespace bls12_381
         static fp modPrime(const std::array<uint64_t, 8>& k)
         {
             fp out;
-            eosio::bls_fp_mod(reinterpret_cast<const uint8_t*>(k.data()), out);
+            eosio::bls_fp_mod(*reinterpret_cast<const eosio::bls_s*>(&k), out);
             return out;
         }
 
@@ -324,7 +324,7 @@ namespace bls12_381
         {
             return *reinterpret_cast<const eosio::bls_fp2*>(&this->c0.w0);
         }
-        static fp2 fromRawBytesLE(const std::span<const uint8_t, 2 * sizeof(fp)>& in)
+        static fp2 fromBytesLE(const std::span<const uint8_t, 2 * sizeof(fp)>& in)
         {
             fp2 out;
             memcpy(out.data(), in.data(), 2 * sizeof(fp));
@@ -376,7 +376,7 @@ namespace bls12_381
         {
             return c0.data();
         }
-        static fp6 fromRawBytesLE(const std::span<const uint8_t, 3 * sizeof(fp2)>& in)
+        static fp6 fromBytesLE(const std::span<const uint8_t, 3 * sizeof(fp2)>& in)
         {
             fp6 out;
             memcpy(out.data(), in.data(), 3 * sizeof(fp2));
@@ -423,7 +423,7 @@ namespace bls12_381
         {
             return *reinterpret_cast<const eosio::bls_gt*>(&this->c0.c0.c0.w0);
         }
-        static fp12 fromRawBytesLE(const std::span<const uint8_t, 2 * sizeof(fp6)>& in)
+        static fp12 fromBytesLE(const std::span<const uint8_t, 2 * sizeof(fp6)>& in)
         {
             fp12 out;
             memcpy(out.data(), in.data(), 2 * sizeof(fp6));
@@ -443,18 +443,18 @@ namespace bls12_381
         }
     };
 
+    // affine g1 type
     class g1
     {
         public:
         fp x;
         fp y;
-        fp z;
-        EOSLIB_SERIALIZE(g1, (x)(y)(z))
+        EOSLIB_SERIALIZE(g1, (x)(y))
 
-        g1() : x(fp()), y(fp()), z(fp()) {}
-        g1(const fp& x, const fp& y, const fp& z) : x(x), y(y), z(z) {}
-        g1(const std::array<fp, 3>& d) : x(d[0]), y(d[1]), z(d[2]) {}
-        g1(const g1& e) : x(e.x), y(e.y), z(e.z) {}
+        g1() : x(fp()), y(fp()) {}
+        g1(const fp& x, const fp& y) : x(x), y(y) {}
+        g1(const std::array<fp, 2>& d) : x(d[0]), y(d[1]) {}
+        g1(const g1& e) : x(e.x), y(e.y) {}
         uint8_t* data()
         {
             return x.data();
@@ -471,61 +471,15 @@ namespace bls12_381
         {
             return *reinterpret_cast<const eosio::bls_g1*>(&this->x.w0);
         }
-        static g1 fromRawJacobianBytesLE(const std::span<const uint8_t, 3 * sizeof(fp)> in)
+        static g1 fromAffineBytesLE(const std::span<const uint8_t, 2 * sizeof(fp)> in)
         {
-            fp x = fp::fromRawBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[ 0], &in[ 48]));
-            fp y = fp::fromRawBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[48], &in[ 96]));
-            fp z = fp::fromRawBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[96], &in[144]));
-            g1 p = g1(x, y, z);
+            fp x = fp::fromBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[ 0], &in[ 48]));
+            fp y = fp::fromBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[48], &in[ 96]));
+            g1 p = g1(x, y);
             return p;
-        }
-        static g1 fromRawAffineBytesLE(const std::span<const uint8_t, 2 * sizeof(fp)> in)
-        {
-            fp x = fp::fromRawBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[ 0], &in[ 48]));
-            fp y = fp::fromRawBytesLE(std::span<const uint8_t, sizeof(fp)>(&in[48], &in[ 96]));
-            // check if given input points to infinity
-            if(x.isZero() && y.isZero())
-            {
-                return zero();
-            }
-            fp z = fp::one();
-            g1 p = g1(x, y, z);
-            return p;
-        }
-        static g1 zero()
-        {
-            return g1(
-                fp::zero(),
-                fp::one(),
-                fp::zero()
-            );
-        }
-        static g1 one()
-        {
-            return BASE;
-        }
-        bool isZero() const
-        {
-            return z.isZero();
-        }
-        bool inCorrectSubgroup() const
-        {
-            return mulScalar(scalar::Q).isZero();
-        }
-        bool isAffine() const
-        {
-            return z.isOne();
         }
         g1 add(const g1& e) const
         {
-            if(isZero())
-            {
-                return e;
-            }
-            if(e.isZero())
-            {
-                return *this;
-            }
             g1 out;
             eosio::bls_g1_add(*this, e, out);
             return out;
@@ -536,11 +490,7 @@ namespace bls12_381
         }
         g1 neg() const
         {
-            g1 r;
-            r.x = x;
-            r.y = y.neg();
-            r.z = z;
-            return r;
+            return g1(x, y.neg());
         }
         g1 sub(const g1& e) const
         {
@@ -556,16 +506,13 @@ namespace bls12_381
         g1 mulScalar(const scalar& s) const
         {
             g1 out;
-            eosio::bls_g1_mul(*this, s, out);
+            eosio::bls_g1_weighted_sum(reinterpret_cast<const eosio::bls_g1*>(this->data()), reinterpret_cast<const eosio::bls_scalar*>(s.data()), 1, out);
             return out;
         }
-        static g1 multiExp(const std::vector<g1>& points, const std::vector<scalar>& scalars)
+        static g1 multiExp(const g1 points[], const scalar scalars[], const uint32_t num)
         {
-            eosio::check(points.size() == scalars.size(), "g1 multiExp: points and scalars must have same number of elements");
             g1 out;
-            const eosio::bls_g1* p = reinterpret_cast<const eosio::bls_g1*>(points.data());
-            const eosio::bls_scalar* s = reinterpret_cast<const eosio::bls_scalar*>(scalars.data());
-            eosio::bls_g1_exp(p, s, points.size(), out);
+            eosio::bls_g1_weighted_sum(reinterpret_cast<const eosio::bls_g1*>(points), reinterpret_cast<const eosio::bls_scalar*>(scalars), num, out);
             return out;
         }
         static g1 mapToCurve(const fp& e)
@@ -575,28 +522,22 @@ namespace bls12_381
             return out;
         }
 
-        static const g1 BASE;
         static const scalar cofactorEFF;
     };
-    const g1 g1::BASE = g1(
-        fp(0x5cb38790fd530c16, 0x7817fc679976fff5, 0x154f95c7143ba1c1, 0xf0ae6acdf3d0e747, 0xedce6ecc21dbf440, 0x120177419e0bfb75),
-        fp(0xbaac93d50ce72271, 0x8c22631a7918fd8e, 0xdd595f13570725ce, 0x51ac582950405194, 0x0e1c8c3fad0059c0, 0x0bbc3efc5008a26a),
-        fp(0x760900000002fffd, 0xebf4000bc40c0002, 0x5f48985753c758ba, 0x77ce585370525745, 0x5c071a97a256ec6d, 0x15f65ec3fa80e493)
-    );
     const scalar g1::cofactorEFF = {0xd201000000010001, 0, 0, 0};
 
+    // affine g2 type
     class g2
     {
         public:
         fp2 x;
         fp2 y;
-        fp2 z;
-        EOSLIB_SERIALIZE(g2, (x)(y)(z))
+        EOSLIB_SERIALIZE(g2, (x)(y))
 
-        g2() : x(fp2()), y(fp2()), z(fp2()) {}
-        g2(const fp2& x, const fp2& y, const fp2& z) : x(x), y(y), z(z) {}
-        g2(const std::array<fp2, 3>& d) : x(d[0]), y(d[1]), z(d[2]) {}
-        g2(const g2& e) : x(e.x), y(e.y), z(e.z) {}
+        g2() : x(fp2()), y(fp2()) {}
+        g2(const fp2& x, const fp2& y) : x(x), y(y) {}
+        g2(const std::array<fp2, 2>& d) : x(d[0]), y(d[1]) {}
+        g2(const g2& e) : x(e.x), y(e.y) {}
         uint8_t* data()
         {
             return x.data();
@@ -613,61 +554,15 @@ namespace bls12_381
         {
             return *reinterpret_cast<const eosio::bls_g2*>(&this->x.c0.w0);
         }
-        static g2 fromRawJacobianBytesLE(const std::span<const uint8_t, 3 * sizeof(fp2)> in)
+        static g2 fromAffineBytesLE(const std::span<const uint8_t, 2 * sizeof(fp2)> in)
         {
-            fp2 x = fp2::fromRawBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[  0], &in[ 96]));
-            fp2 y = fp2::fromRawBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[ 96], &in[192]));
-            fp2 z = fp2::fromRawBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[192], &in[288]));
-            g2 p = g2(x, y, z);
+            fp2 x = fp2::fromBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[ 0], &in[ 96]));
+            fp2 y = fp2::fromBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[96], &in[192]));
+            g2 p = g2(x, y);
             return p;
-        }
-        static g2 fromRawAffineBytesLE(const std::span<const uint8_t, 2 * sizeof(fp2)> in)
-        {
-            fp2 x = fp2::fromRawBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[ 0], &in[ 96]));
-            fp2 y = fp2::fromRawBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[96], &in[192]));
-            // check if given input points to infinity
-            if(x.isZero() && y.isZero())
-            {
-                return zero();
-            }
-            fp2 z = fp2::one();
-            g2 p = g2(x, y, z);
-            return p;
-        }
-        static g2 zero()
-        {
-            return g2(
-                fp2::zero(),
-                fp2::one(),
-                fp2::zero()
-            );
-        }
-        g2 one()
-        {
-            return BASE;
-        }
-        bool isZero() const
-        {
-            return z.isZero();
-        }
-        bool inCorrectSubgroup() const
-        {
-            return mulScalar(scalar::Q).isZero();
-        }
-        bool isAffine() const
-        {
-            return z.isOne();
         }
         g2 add(const g2& e) const
         {
-            if(isZero())
-            {
-                return e;
-            }
-            if(e.isZero())
-            {
-                return *this;
-            }
             g2 out;
             eosio::bls_g2_add(*this, e, out);
             return out;
@@ -678,7 +573,7 @@ namespace bls12_381
         }
         g2 neg() const
         {
-            return g2(x, y.neg(), z);
+            return g2(x, y.neg());
         }
         g2 sub(const g2& e) const
         {
@@ -690,16 +585,13 @@ namespace bls12_381
         g2 mulScalar(const scalar& s) const
         {
             g2 out;
-            eosio::bls_g2_mul(*this, s, out);
+            eosio::bls_g2_weighted_sum(reinterpret_cast<const eosio::bls_g2*>(this->data()), reinterpret_cast<const eosio::bls_scalar*>(s.data()), 1, out);
             return out;
         }
-        static g2 multiExp(const std::vector<g2>& points, const std::vector<scalar>& scalars)
+        static g2 multiExp(const g2 points[], const scalar scalars[], const uint32_t num)
         {
-            eosio::check(points.size() == scalars.size(), "g2 multiExp: points and scalars must have same number of elements");
             g2 out;
-            const eosio::bls_g2* p = reinterpret_cast<const eosio::bls_g2*>(points.data());
-            const eosio::bls_scalar* s = reinterpret_cast<const eosio::bls_scalar*>(scalars.data());
-            eosio::bls_g2_exp(p, s, points.size(), out);
+            eosio::bls_g2_weighted_sum(reinterpret_cast<const eosio::bls_g2*>(points), reinterpret_cast<const eosio::bls_scalar*>(scalars), num, out);
             return out;
         }
         static g2 mapToCurve(const fp2& e)
@@ -708,33 +600,14 @@ namespace bls12_381
             eosio::bls_g2_map(e, out);
             return out;
         }
-
-        static const g2 BASE;
     };
-    const g2 g2::BASE = g2(
-        fp2(
-            fp(0xf5f28fa202940a10, 0xb3f5fb2687b4961a, 0xa1a893b53e2ae580, 0x9894999d1a3caee9, 0x6f67b7631863366b, 0x058191924350bcd7),
-            fp(0xa5a9c0759e23f606, 0xaaa0c59dbccd60c3, 0x3bb17e18e2867806, 0x1b1ab6cc8541b367, 0xc2b6ed0ef2158547, 0x11922a097360edf3)
-        ),
-        fp2(
-            fp(0x4c730af860494c4a, 0x597cfa1f5e369c5a, 0xe7e6856caa0a635a, 0xbbefb5e96e0d495f, 0x07d3a975f0ef25a2, 0x083fd8e7e80dae5),
-            fp(0xadc0fc92df64b05d, 0x18aa270a2b1461dc, 0x86adac6a3be4eba0, 0x79495c4ec93da33a, 0xe7175850a43ccaed, 0xb2bc2a163de1bf2)
-        ),
-        fp2(
-            fp(0x760900000002fffd, 0xebf4000bc40c0002, 0x5f48985753c758ba, 0x77ce585370525745, 0x5c071a97a256ec6d, 0x15f65ec3fa80e493),
-            fp(0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000)
-        )
-    );
 
     namespace pairing
     {
-        fp12 calculate(std::vector<g1>& g1_points, std::vector<g2>& g2_points)
+        fp12 calculate(const g1 g1_points[], const g2 g2_points[], const uint32_t num)
         {
-            eosio::check(g1_points.size() == g2_points.size(), "pairing: g1_points and g2_points must have same number of elements");
             fp12 f;
-            const eosio::bls_g1* p1 = reinterpret_cast<const eosio::bls_g1*>(g1_points.data());
-            const eosio::bls_g2* p2 = reinterpret_cast<const eosio::bls_g2*>(g2_points.data());
-            eosio::bls_pairing(p1, p2, g1_points.size(), f);
+            eosio::bls_pairing(reinterpret_cast<const eosio::bls_g1*>(g1_points), reinterpret_cast<const eosio::bls_g2*>(g2_points), num, f);
             return f;
         }
     }
@@ -803,16 +676,16 @@ namespace bls12_381
         g2 p, q, res;
 
         k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf));
-        eosio::bls_fp_mod(reinterpret_cast<uint8_t*>(&k[0]), t[0]);
+        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c0);
         k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 64));
-        eosio::bls_fp_mod(reinterpret_cast<uint8_t*>(&k[0]), t[1]);
+        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c1);
 
         eosio::bls_g2_map(t, p);
 
         k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 2*64));
-        eosio::bls_fp_mod(reinterpret_cast<uint8_t*>(&k[0]), t[0]);
+        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c0);
         k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 3*64));
-        eosio::bls_fp_mod(reinterpret_cast<uint8_t*>(&k[0]), t[1]);
+        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c1);
 
         eosio::bls_g2_map(t, q);
         eosio::bls_g2_add(p, q, res);
@@ -830,22 +703,68 @@ namespace bls12_381
             g1 c;
             EOSLIB_SERIALIZE(Proof, (a)(b)(c))
 
-            Proof() : a(g1::zero()), b(g2::zero()), c(g1::zero()) {}
+            Proof() : a(g1()), b(g2()), c(g1()) {}
             Proof(const g1& a, const g2& b, const g1& c) : a(a), b(b), c(c) {}
             Proof(const Proof& proof) : a(proof.a), b(proof.b), c(proof.c) {}
-            static Proof fromRawJacobianBytesLE(const std::span<const uint8_t, 576> in)
+            static Proof fromAffineBytesLE(const std::span<const uint8_t, 384> in)
             {
-                g1 a = g1::fromRawJacobianBytesLE(std::span<const uint8_t, 144>(&in[  0], &in[144]));
-                g2 b = g2::fromRawJacobianBytesLE(std::span<const uint8_t, 288>(&in[144], &in[432]));
-                g1 c = g1::fromRawJacobianBytesLE(std::span<const uint8_t, 144>(&in[432], &in[576]));
+                g1 a = g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[  0], &in[ 96]));
+                g2 b = g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[ 96], &in[288]));
+                g1 c = g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[288], &in[384]));
                 return Proof(a, b, c);
             }
-            static Proof fromRawAffineBytesLE(const std::span<const uint8_t, 384> in)
+        };
+
+        class VerifyingKey
+        {
+            public:
+            g1 alpha_g1;        // alpha in g1 for verifying and for creating A/C elements of proof. Never the point at infinity.
+            g1 beta_g1;         // beta in g1 and g2 for verifying and for creating B/C elements of proof. Never the point at infinity.
+            g2 beta_g2;
+            g2 gamma_g2;        // gamma in g2 for verifying. Never the point at infinity.
+            g1 delta_g1;        // delta in g1/g2 for verifying and proving, essentially the magic trapdoor that forces the prover to
+            g2 delta_g2;        // evaluate the C element of the proof with only components from the CRS. Never the point at infinity.
+            std::vector<g1> ic; // Elements of the form (beta * u_i(tau) + alpha v_i(tau) + w_i(tau)) / gamma for all public inputs.
+                                // Because all public inputs have a dummy constraint, this is the same size as the number of inputs,
+                                // and never contains points at infinity.
+            EOSLIB_SERIALIZE(VerifyingKey, (alpha_g1)(beta_g1)(beta_g2)(gamma_g2)(delta_g1)(delta_g2)(ic))
+
+            VerifyingKey() : alpha_g1(g1()), beta_g1(g1()), beta_g2(g2()), gamma_g2(g2()), delta_g1(g1()), delta_g2(g2()), ic(std::vector<g1>()) {}
+            VerifyingKey(
+                const g1& alpha_g1,
+                const g1& beta_g1,
+                const g2& beta_g2,
+                const g2& gamma_g2,
+                const g1& delta_g1,
+                const g2& delta_g2,
+                const std::vector<g1>& ic
+            ) : alpha_g1(alpha_g1), beta_g1(beta_g1), beta_g2(beta_g2), gamma_g2(gamma_g2), delta_g1(delta_g1), delta_g2(delta_g2), ic(ic) {}
+            VerifyingKey(const VerifyingKey& vk)
+                : alpha_g1(vk.alpha_g1), beta_g1(vk.beta_g1), beta_g2(vk.beta_g2), gamma_g2(vk.gamma_g2), delta_g1(vk.delta_g1), delta_g2(vk.delta_g2), ic(vk.ic) {}
+            static VerifyingKey fromAffineBytesLE(const uint8_t* in)
             {
-                g1 a = g1::fromRawAffineBytesLE(std::span<const uint8_t,  96>(&in[  0], &in[ 96]));
-                g2 b = g2::fromRawAffineBytesLE(std::span<const uint8_t, 192>(&in[ 96], &in[288]));
-                g1 c = g1::fromRawAffineBytesLE(std::span<const uint8_t,  96>(&in[288], &in[384]));
-                return Proof(a, b, c);
+                g1 alpha_g1 = g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[  0], &in[ 96]));
+                g1 beta_g1 =  g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[ 96], &in[192]));
+                g2 beta_g2 =  g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[192], &in[384]));
+                g2 gamma_g2 = g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[384], &in[576]));
+                g1 delta_g1 = g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[576], &in[672]));
+                g2 delta_g2 = g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[672], &in[864]));
+                std::vector<g1> ic;
+                uint32_t n_ic = in[864] | in[865] << 8 | in[866] << 16 | in[867] << 24;
+                ic.reserve(n_ic);
+                for(uint32_t i = 0; i < n_ic; i++)
+                {
+                    ic.push_back(g1::fromAffineBytesLE(std::span<const uint8_t, 96>(&in[868 + i*96], &in[868 + (i+1)*96])));
+                }
+                return VerifyingKey(
+                    alpha_g1,
+                    beta_g1,
+                    beta_g2,
+                    gamma_g2,
+                    delta_g1,
+                    delta_g2,
+                    ic
+                );
             }
         };
 
@@ -858,41 +777,22 @@ namespace bls12_381
             std::vector<g1> ic;         // Copy of 'ic' from `vk`
             EOSLIB_SERIALIZE(PreparedVerifyingKey, (alpha_g1_beta_g2)(neg_gamma_g2)(neg_delta_g2)(ic))
 
-            PreparedVerifyingKey() : alpha_g1_beta_g2(fp12::zero()), neg_gamma_g2(g2::zero()), neg_delta_g2(g2::zero()), ic(std::vector<g1>()) {}
+            PreparedVerifyingKey() : alpha_g1_beta_g2(fp12()), neg_gamma_g2(g2()), neg_delta_g2(g2()), ic(std::vector<g1>()) {}
             PreparedVerifyingKey(const fp12& alpha_g1_beta_g2, const g2& neg_gamma_g2, const g2& neg_delta_g2, const std::vector<g1>& ic) :
                 alpha_g1_beta_g2(alpha_g1_beta_g2), neg_gamma_g2(neg_gamma_g2), neg_delta_g2(neg_delta_g2), ic(ic) {}
             PreparedVerifyingKey(const PreparedVerifyingKey& pvk) :
                 alpha_g1_beta_g2(pvk.alpha_g1_beta_g2), neg_gamma_g2(pvk.neg_gamma_g2), neg_delta_g2(pvk.neg_delta_g2), ic(pvk.ic) {}
-            static PreparedVerifyingKey fromRawJacobianBytesLE(const uint8_t* in)
+            static PreparedVerifyingKey fromAffineBytesLE(const uint8_t* in)
             {
-                fp12 alpha_g1_beta_g2 = fp12::fromRawBytesLE(std::span<const uint8_t, 576>(&in[   0], &in[ 576]));
-                g2 neg_gamma_g2 = g2::fromRawJacobianBytesLE(std::span<const uint8_t, 288>(&in[ 576], &in[ 864]));
-                g2 neg_delta_g2 = g2::fromRawJacobianBytesLE(std::span<const uint8_t, 288>(&in[ 864], &in[1152]));
-                std::vector<g1> ic;
-                uint32_t n_ic = in[1152] | in[1153] << 8 | in[1154] << 16 | in[1155] << 24;
-                ic.reserve(n_ic);
-                for(uint32_t i = 0; i < n_ic; i++)
-                {
-                    ic.push_back(g1::fromRawJacobianBytesLE(std::span<const uint8_t, 144>(&in[1156 + i*144], &in[1156 + (i+1)*144])));
-                }
-                return PreparedVerifyingKey(
-                    alpha_g1_beta_g2,
-                    neg_gamma_g2,
-                    neg_delta_g2,
-                    ic
-                );
-            }
-            static PreparedVerifyingKey fromRawAffineBytesLE(const uint8_t* in)
-            {
-                fp12 alpha_g1_beta_g2 = fp12::fromRawBytesLE(std::span<const uint8_t, 576>(&in[  0], &in[576]));
-                g2 neg_gamma_g2 =   g2::fromRawAffineBytesLE(std::span<const uint8_t, 192>(&in[576], &in[768]));
-                g2 neg_delta_g2 =   g2::fromRawAffineBytesLE(std::span<const uint8_t, 192>(&in[768], &in[960]));
+                fp12 alpha_g1_beta_g2 = fp12::fromBytesLE(std::span<const uint8_t, 576>(&in[  0], &in[576]));
+                g2 neg_gamma_g2 =   g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[576], &in[768]));
+                g2 neg_delta_g2 =   g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[768], &in[960]));
                 std::vector<g1> ic;
                 uint32_t n_ic = in[960] | in[961] << 8 | in[962] << 16 | in[963] << 24;
                 ic.reserve(n_ic);
                 for(uint32_t i = 0; i < n_ic; i++)
                 {
-                    ic.push_back(g1::fromRawAffineBytesLE(std::span<const uint8_t, 96>(&in[964 + i*96], &in[964 + (i+1)*96])));
+                    ic.push_back(g1::fromAffineBytesLE(std::span<const uint8_t, 96>(&in[964 + i*96], &in[964 + (i+1)*96])));
                 }
                 return PreparedVerifyingKey(
                     alpha_g1_beta_g2,
@@ -902,6 +802,16 @@ namespace bls12_381
                 );
             }
         };
+
+        PreparedVerifyingKey prepare_verifying_key(const VerifyingKey& vk)
+        {
+            return PreparedVerifyingKey(
+                pairing::calculate(&vk.alpha_g1, &vk.beta_g2, 1),
+                vk.gamma_g2.neg(),
+                vk.delta_g2.neg(),
+                vk.ic
+            );
+        }
 
         bool verify_proof(
             const PreparedVerifyingKey& pvk,
@@ -909,23 +819,37 @@ namespace bls12_381
             const std::vector<scalar>& public_inputs
         )
         {
-            if(public_inputs.size() + 1 != pvk.ic.size())
+            if(public_inputs.size() != pvk.ic.size())
             {
                 return false;
             }
-
-            g1 acc = pvk.ic[0];
-            for(uint32_t i = 1; i < pvk.ic.size(); i++)
-            {
-                acc = acc.add(pvk.ic[i].mulScalar(public_inputs[i-1]));
-            }
-
+            g1 acc = g1::multiExp(pvk.ic.data(), public_inputs.data(), pvk.ic.size());
             std::vector<g1> g1_points; g1_points.reserve(3);
             std::vector<g2> g2_points; g2_points.reserve(3);
             g1_points.push_back(proof.a);   g2_points.push_back(proof.b);
             g1_points.push_back(acc);       g2_points.push_back(pvk.neg_gamma_g2);
             g1_points.push_back(proof.c);   g2_points.push_back(pvk.neg_delta_g2);
-            return pvk.alpha_g1_beta_g2.equal(pairing::calculate(g1_points, g2_points));
+            return pvk.alpha_g1_beta_g2.equal(pairing::calculate(g1_points.data(), g2_points.data(), 3));
         };
     } // namespace groth16
+
+    // the following compile-time assertions guarantee that all type casts as implemented
+    // above (i.e. between std::array types, eosio types and bls12_381 types) are valid
+    // source: https://stackoverflow.com/a/69500849/2340535
+    static_assert(sizeof(scalar) == sizeof(uint64_t[4]));
+    static_assert(sizeof(scalar) == sizeof(std::array<uint64_t, 4>));
+    static_assert(sizeof(scalar) == sizeof(eosio::bls_scalar));
+    static_assert(sizeof(fp) == sizeof(uint64_t[6]));
+    static_assert(sizeof(fp) == sizeof(std::array<uint64_t, 6>));
+    static_assert(sizeof(fp) == sizeof(eosio::bls_fp));
+    static_assert(sizeof(fp2) == sizeof(fp[2]));
+    static_assert(sizeof(fp2) == sizeof(std::array<fp, 2>));
+    static_assert(sizeof(fp2) == sizeof(eosio::bls_fp2));
+    static_assert(sizeof(fp6) == sizeof(fp2[3]));
+    static_assert(sizeof(fp6) == sizeof(std::array<fp2, 3>));
+    static_assert(sizeof(fp12) == sizeof(fp6[2]));
+    static_assert(sizeof(fp12) == sizeof(std::array<fp6, 2>));
+    static_assert(sizeof(fp12) == sizeof(eosio::bls_gt));
+    static_assert(sizeof(std::array<uint64_t, 8>) == sizeof(eosio::bls_s));
+    static_assert(sizeof(uint64_t[8]) == sizeof(eosio::bls_s));
 } // namespace bls12_381
