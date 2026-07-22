@@ -1,98 +1,148 @@
 #pragma once
+
 #include <eosio/eosio.hpp>
+#include <eosio/crypto.hpp>
 #include <eosio/crypto_bls_ext.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <span>
+#include <string>
+#include <vector>
 
 #ifndef __eosio_cdt__
 typedef __int128 int128_t;
 typedef unsigned __int128 uint128_t;
 #endif
 
-#include "sha256.hpp"
+namespace bls12_381_cdt_detail
+{
+    inline bool hasHexPrefix(const std::string& s)
+    {
+        return s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
+    }
+
+    inline int16_t hexNibble(const char c)
+    {
+        if(c >= '0' && c <= '9') return static_cast<int16_t>(c - '0');
+        if(c >= 'a' && c <= 'f') return static_cast<int16_t>(c - 'a' + 10);
+        if(c >= 'A' && c <= 'F') return static_cast<int16_t>(c - 'A' + 10);
+        return -1;
+    }
+
+    inline std::array<uint8_t, 32> sha256Digest(const std::vector<uint8_t>& input)
+    {
+        eosio::check(input.size() <= std::numeric_limits<uint32_t>::max(), "SHA-256 input too large");
+        const char* data = input.empty() ? "" : reinterpret_cast<const char*>(input.data());
+        return eosio::sha256(data, static_cast<uint32_t>(input.size())).extract_as_byte_array();
+    }
+
+    inline uint32_t readUint32LE(const uint8_t* in)
+    {
+        return static_cast<uint32_t>(in[0]) |
+               (static_cast<uint32_t>(in[1]) << 8) |
+               (static_cast<uint32_t>(in[2]) << 16) |
+               (static_cast<uint32_t>(in[3]) << 24);
+    }
+
+    inline size_t encodedVectorSize(const size_t prefix_size, const uint32_t count, const size_t element_size)
+    {
+        eosio::check(
+            static_cast<size_t>(count) <= (std::numeric_limits<size_t>::max() - prefix_size) / element_size,
+            "encoded vector size overflow"
+        );
+        return prefix_size + static_cast<size_t>(count) * element_size;
+    }
+}
 
 template<size_t N>
 inline std::string bytesToHex(const std::span<const uint8_t, N>& in)
 {
     constexpr char hexmap[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     std::string s(N * 2, ' ');
-    for(uint64_t i = 0; i < N; i++)
+    for(size_t i = 0; i < N; i++)
     {
         s[2*i]     = hexmap[(in[i] & 0xF0) >> 4];
         s[2*i+1]   = hexmap[ in[i] & 0x0F      ];
     }
     return s;
 }
+
 inline std::string bytesToHex(const std::vector<uint8_t>& in)
 {
     constexpr char hexmap[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     std::string s(in.size() * 2, ' ');
-    for(uint64_t i = 0; i < in.size(); ++i)
+    for(size_t i = 0; i < in.size(); ++i)
     {
         s[2*i]     = hexmap[(in[i] & 0xF0) >> 4];
         s[2*i+1]   = hexmap[ in[i] & 0x0F      ];
     }
     return s;
 }
+
 template<size_t N>
 inline void hexToBytes(const std::string& s, std::span<uint8_t, N> out)
 {
-    // No checks on the string length in the compile time version!
-    uint64_t start_idx = 0;
-    if(s[0] == '0' && s[1] == 'x')
-    {
-        start_idx = 2;
-    }
+    const size_t start_idx = bls12_381_cdt_detail::hasHexPrefix(s) ? 2 : 0;
+    eosio::check(s.size() >= start_idx + 2 * N, "hexToBytes: input is too short");
 
     for(size_t i = 0, j = start_idx; i < N; i++, j += 2)
     {
-        out[i] = (s[j] % 32 + 9) % 25 * 16 + (s[j+1] % 32 + 9) % 25;
+        const int16_t hi = bls12_381_cdt_detail::hexNibble(s[j]);
+        const int16_t lo = bls12_381_cdt_detail::hexNibble(s[j+1]);
+        eosio::check(hi >= 0 && lo >= 0, "hexToBytes: invalid hexadecimal character");
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
     }
 }
+
 template<size_t N>
 inline std::array<uint8_t, N> hexToBytes(const std::string& s)
 {
-    std::array<uint8_t, N> out;
+    std::array<uint8_t, N> out{};
     hexToBytes<N>(s, out);
     return out;
 }
+
 inline std::vector<uint8_t> hexToBytes(const std::string& s)
 {
-    uint64_t start_idx = 0;
-    if(s[0] == '0' && s[1] == 'x')
+    const size_t start_idx = bls12_381_cdt_detail::hasHexPrefix(s) ? 2 : 0;
+    const size_t hex_length = s.size() - start_idx;
+    if(hex_length % 2 != 0)
     {
-        start_idx = 2;
-    }
-
-    if(s.length() % 2 != 0)
-    {
-        //throw invalid_argument("string length invalid!");
-        return std::vector<uint8_t>();
+        return {};
     }
 
     std::vector<uint8_t> bytes;
-    uint64_t num_bytes = (s.length() - start_idx) / 2;
+    const size_t num_bytes = hex_length / 2;
     bytes.reserve(num_bytes);
     for(size_t i = 0, j = start_idx; i < num_bytes; i++, j += 2)
     {
-        bytes.push_back((s[j] % 32 + 9) % 25 * 16 + (s[j+1] % 32 + 9) % 25);
+        const int16_t hi = bls12_381_cdt_detail::hexNibble(s[j]);
+        const int16_t lo = bls12_381_cdt_detail::hexNibble(s[j+1]);
+        if(hi < 0 || lo < 0)
+        {
+            return {};
+        }
+        bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
     }
 
     return bytes;
 }
-// custom split() function
+
 inline std::vector<std::string> split(std::string str, char separator)
 {
     std::vector<std::string> strings;
-    int start = 0, end = 0;
+    size_t start = 0;
     for(size_t i = 0; i <= str.size(); i++)
     {
-        if(str[i] == separator || i == str.size())
+        // Check the boundary before indexing str[i].
+        if(i == str.size() || str[i] == separator)
         {
-            end = i;
-            std::string tmp = "";
-            tmp.append(str, start, end - start);
-            strings.push_back(tmp);
-            start = end + 1;
+            strings.emplace_back(str.substr(start, i - start));
+            start = i + 1;
         }
     }
     return strings;
@@ -150,7 +200,29 @@ namespace bls12_381
         }
         uint64_t& operator[](int i)
         {
-            return *reinterpret_cast<uint64_t*>(&this->w0 + i * sizeof(uint64_t));
+            switch(i)
+            {
+                case 0: return w0;
+                case 1: return w1;
+                case 2: return w2;
+                case 3: return w3;
+                default:
+                    eosio::check(false, "scalar limb index out of range");
+                    return w0;
+            }
+        }
+        const uint64_t& operator[](int i) const
+        {
+            switch(i)
+            {
+                case 0: return w0;
+                case 1: return w1;
+                case 2: return w2;
+                case 3: return w3;
+                default:
+                    eosio::check(false, "scalar limb index out of range");
+                    return w0;
+            }
         }
         static scalar fromBytesLE(const std::span<const uint8_t, 4 * sizeof(uint64_t)>& in)
         {
@@ -160,6 +232,7 @@ namespace bls12_381
         }
         static scalar fromBytesLE(const std::vector<uint8_t>& in)
         {
+            eosio::check(in.size() >= 4 * sizeof(uint64_t), "scalar::fromBytesLE: expected at least 32 bytes");
             scalar out;
             memcpy(out.data(), in.data(), 4 * sizeof(uint64_t));
             return out;
@@ -431,7 +504,33 @@ namespace bls12_381
         }
         uint64_t& operator[](int i)
         {
-            return *reinterpret_cast<uint64_t*>(&this->w0 + i * sizeof(uint64_t));
+            switch(i)
+            {
+                case 0: return w0;
+                case 1: return w1;
+                case 2: return w2;
+                case 3: return w3;
+                case 4: return w4;
+                case 5: return w5;
+                default:
+                    eosio::check(false, "fp limb index out of range");
+                    return w0;
+            }
+        }
+        const uint64_t& operator[](int i) const
+        {
+            switch(i)
+            {
+                case 0: return w0;
+                case 1: return w1;
+                case 2: return w2;
+                case 3: return w3;
+                case 4: return w4;
+                case 5: return w5;
+                default:
+                    eosio::check(false, "fp limb index out of range");
+                    return w0;
+            }
         }
         static fp fromBytesLE(const std::span<const uint8_t, 6 * sizeof(uint64_t)>& in)
         {
@@ -894,9 +993,8 @@ namespace bls12_381
         }
     }
 
-    // signatures.cpp functions
-
-    // Construct an extensible-output function based on SHA256
+    // expand_message_xmd using SHA-256, following the same byte construction as
+    // the previous bundled SHA-256 implementation while delegating hashing to Leap.
     inline void xmd_sh256(
         uint8_t *buf,
         int buf_len,
@@ -906,52 +1004,86 @@ namespace bls12_381
         int dst_len
     )
     {
-        const unsigned int SHA256HashSize = 32;
-        const unsigned int SHA256_Message_Block_Size = 64;
-        const unsigned ell = (buf_len + SHA256HashSize - 1) / SHA256HashSize;
-        if (buf_len < 0 || ell > 255 || dst_len > 255)
+        constexpr size_t SHA256HashSize = 32;
+        constexpr size_t SHA256MessageBlockSize = 64;
+
+        eosio::check(buf_len >= 0, "xmd_sh256: negative output length");
+        eosio::check(in_len >= 0, "xmd_sh256: negative input length");
+        eosio::check(dst_len >= 0 && dst_len <= 255, "xmd_sh256: invalid DST length");
+        eosio::check(buf != nullptr || buf_len == 0, "xmd_sh256: null output buffer");
+        eosio::check(in != nullptr || in_len == 0, "xmd_sh256: null input buffer");
+        eosio::check(dst != nullptr || dst_len == 0, "xmd_sh256: null DST buffer");
+
+        const size_t output_len = static_cast<size_t>(buf_len);
+        const size_t ell = (output_len + SHA256HashSize - 1) / SHA256HashSize;
+        eosio::check(ell <= 255, "xmd_sh256: output length too large");
+        if(output_len == 0)
         {
             return;
         }
-        const uint8_t Z_pad[SHA256_Message_Block_Size] = { 0, };
-        const uint8_t l_i_b_0_str[] = {
-            static_cast<uint8_t>(buf_len >> 8),
-            static_cast<uint8_t>(buf_len & 0xff),
-            0,
-            static_cast<uint8_t>(dst_len)
+
+        const uint8_t l_i_b_str[2] = {
+            static_cast<uint8_t>(output_len >> 8),
+            static_cast<uint8_t>(output_len & 0xff)
         };
-        const uint8_t *dstlen_str = l_i_b_0_str + 3;
-        uint8_t b_0[SHA256HashSize];
-        sha256 sha;
-        sha.update(Z_pad, SHA256_Message_Block_Size);
-        sha.update(in, in_len);
-        sha.update(l_i_b_0_str, 3);
-        sha.update(dst, dst_len);
-        sha.update(dstlen_str, 1);
-        sha.digest(b_0);
-        uint8_t b_i[SHA256HashSize + 1] = { 0, };
-        for (unsigned i = 1; i <= ell; ++i)
+        const uint8_t dst_len_byte = static_cast<uint8_t>(dst_len);
+
+        std::vector<uint8_t> b0_input;
+        b0_input.reserve(SHA256MessageBlockSize + static_cast<size_t>(in_len) + 3 + static_cast<size_t>(dst_len) + 1);
+        b0_input.insert(b0_input.end(), SHA256MessageBlockSize, 0);
+        if(in_len > 0)
         {
-            for (unsigned j = 0; j < SHA256HashSize; ++j)
+            b0_input.insert(b0_input.end(), in, in + in_len);
+        }
+        b0_input.push_back(l_i_b_str[0]);
+        b0_input.push_back(l_i_b_str[1]);
+        b0_input.push_back(0);
+        if(dst_len > 0)
+        {
+            b0_input.insert(b0_input.end(), dst, dst + dst_len);
+        }
+        b0_input.push_back(dst_len_byte);
+
+        const std::array<uint8_t, SHA256HashSize> b0 = bls12_381_cdt_detail::sha256Digest(b0_input);
+        std::array<uint8_t, SHA256HashSize> bi{};
+
+        for(size_t i = 1; i <= ell; ++i)
+        {
+            std::vector<uint8_t> bi_input;
+            bi_input.reserve(SHA256HashSize + 1 + static_cast<size_t>(dst_len) + 1);
+            for(size_t j = 0; j < SHA256HashSize; ++j)
             {
-                b_i[j] = b_0[j] ^ b_i[j];
+                bi_input.push_back(static_cast<uint8_t>(b0[j] ^ bi[j]));
             }
-            b_i[SHA256HashSize] = i;
-            sha256 s;
-            s.update(b_i, SHA256HashSize + 1);
-            s.update(dst, dst_len);
-            s.update(dstlen_str, 1);
-            s.digest(b_i);
-            const int rem_after = buf_len - i * SHA256HashSize;
-            const int copy_len = SHA256HashSize + (rem_after < 0 ? rem_after : 0);
-            memcpy(buf + (i - 1) * SHA256HashSize, b_i, copy_len);
+            bi_input.push_back(static_cast<uint8_t>(i));
+            if(dst_len > 0)
+            {
+                bi_input.insert(bi_input.end(), dst, dst + dst_len);
+            }
+            bi_input.push_back(dst_len_byte);
+
+            bi = bls12_381_cdt_detail::sha256Digest(bi_input);
+
+            const size_t offset = (i - 1) * SHA256HashSize;
+            const size_t copy_len = std::min(SHA256HashSize, output_len - offset);
+            memcpy(buf + offset, bi.data(), copy_len);
         }
     }
 
     inline g2 fromMessage(const std::vector<uint8_t>& msg, const std::string& dst)
     {
+        eosio::check(msg.size() <= static_cast<size_t>(std::numeric_limits<int>::max()), "fromMessage: message too large");
+        eosio::check(dst.size() <= 255, "fromMessage: DST too large");
+
         uint8_t buf[4 * 64];
-        xmd_sh256(buf, 4 * 64, msg.data(), msg.size(), reinterpret_cast<const uint8_t*>(dst.c_str()), dst.length());
+        xmd_sh256(
+            buf,
+            4 * 64,
+            msg.data(),
+            static_cast<int>(msg.size()),
+            reinterpret_cast<const uint8_t*>(dst.data()),
+            static_cast<int>(dst.size())
+        );
 
         std::array<uint64_t, 8> k;
         fp2 t;
@@ -1032,7 +1164,7 @@ namespace bls12_381
                 g1 delta_g1 = g1::fromAffineBytesLE(std::span<const uint8_t,  96>(&in[576], &in[672]));
                 g2 delta_g2 = g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[672], &in[864]));
                 std::vector<g1> ic;
-                uint32_t n_ic = in[864] | in[865] << 8 | in[866] << 16 | in[867] << 24;
+                uint32_t n_ic = bls12_381_cdt_detail::readUint32LE(in + 864);
                 ic.reserve(n_ic);
                 for(uint32_t i = 0; i < n_ic; i++)
                 {
@@ -1047,6 +1179,16 @@ namespace bls12_381
                     delta_g2,
                     ic
                 );
+            }
+            static VerifyingKey fromAffineBytesLE(const std::vector<uint8_t>& in)
+            {
+                constexpr size_t prefix_size = 868;
+                constexpr size_t ic_element_size = 96;
+                eosio::check(in.size() >= prefix_size, "VerifyingKey::fromAffineBytesLE: input is too short");
+                const uint32_t n_ic = bls12_381_cdt_detail::readUint32LE(in.data() + 864);
+                const size_t expected_size = bls12_381_cdt_detail::encodedVectorSize(prefix_size, n_ic, ic_element_size);
+                eosio::check(in.size() >= expected_size, "VerifyingKey::fromAffineBytesLE: truncated IC vector");
+                return fromAffineBytesLE(in.data());
             }
         };
 
@@ -1070,7 +1212,7 @@ namespace bls12_381
                 g2 neg_gamma_g2 =   g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[576], &in[768]));
                 g2 neg_delta_g2 =   g2::fromAffineBytesLE(std::span<const uint8_t, 192>(&in[768], &in[960]));
                 std::vector<g1> ic;
-                uint32_t n_ic = in[960] | in[961] << 8 | in[962] << 16 | in[963] << 24;
+                uint32_t n_ic = bls12_381_cdt_detail::readUint32LE(in + 960);
                 ic.reserve(n_ic);
                 for(uint32_t i = 0; i < n_ic; i++)
                 {
@@ -1082,6 +1224,16 @@ namespace bls12_381
                     neg_delta_g2,
                     ic
                 );
+            }
+            static PreparedVerifyingKey fromAffineBytesLE(const std::vector<uint8_t>& in)
+            {
+                constexpr size_t prefix_size = 964;
+                constexpr size_t ic_element_size = 96;
+                eosio::check(in.size() >= prefix_size, "PreparedVerifyingKey::fromAffineBytesLE: input is too short");
+                const uint32_t n_ic = bls12_381_cdt_detail::readUint32LE(in.data() + 960);
+                const size_t expected_size = bls12_381_cdt_detail::encodedVectorSize(prefix_size, n_ic, ic_element_size);
+                eosio::check(in.size() >= expected_size, "PreparedVerifyingKey::fromAffineBytesLE: truncated IC vector");
+                return fromAffineBytesLE(in.data());
             }
         };
 
@@ -1095,6 +1247,10 @@ namespace bls12_381
             );
         }
 
+        // public_inputs must contain one scalar for every pvk.ic element.
+        // The conventional implicit Groth16 constant is not inserted here: callers
+        // must provide scalar(1, 0, 0, 0) as public_inputs[0], followed by the actual
+        // public inputs in the verifying key's expected order.
         inline bool verify_proof(
             const PreparedVerifyingKey& pvk,
             const Proof& proof,
