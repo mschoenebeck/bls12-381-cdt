@@ -1,38 +1,40 @@
+#pragma once
 #include <eosio/eosio.hpp>
 #include <eosio/crypto_bls_ext.hpp>
 #include <span>
 
+#ifndef __eosio_cdt__
+typedef __int128 int128_t;
+typedef unsigned __int128 uint128_t;
+#endif
+
 #include "sha256.hpp"
 
 template<size_t N>
-std::string bytesToHex(const std::span<const uint8_t, N>& in)
+inline std::string bytesToHex(const std::span<const uint8_t, N>& in)
 {
     constexpr char hexmap[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-    std::string s(2 + N * 2, ' ');
-    s[0] = '0';
-    s[1] = 'x';
+    std::string s(N * 2, ' ');
     for(uint64_t i = 0; i < N; i++)
     {
-        s[2 + 2*i]     = hexmap[(in[i] & 0xF0) >> 4];
-        s[2 + 2*i+1]   = hexmap[ in[i] & 0x0F      ];
+        s[2*i]     = hexmap[(in[i] & 0xF0) >> 4];
+        s[2*i+1]   = hexmap[ in[i] & 0x0F      ];
     }
     return s;
 }
-std::string bytesToHex(const std::vector<uint8_t>& in)
+inline std::string bytesToHex(const std::vector<uint8_t>& in)
 {
     constexpr char hexmap[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-    std::string s(2 + in.size() * 2, ' ');
-    s[0] = '0';
-    s[1] = 'x';
+    std::string s(in.size() * 2, ' ');
     for(uint64_t i = 0; i < in.size(); ++i)
     {
-        s[2 + 2*i]     = hexmap[(in[i] & 0xF0) >> 4];
-        s[2 + 2*i+1]   = hexmap[ in[i] & 0x0F      ];
+        s[2*i]     = hexmap[(in[i] & 0xF0) >> 4];
+        s[2*i+1]   = hexmap[ in[i] & 0x0F      ];
     }
     return s;
 }
 template<size_t N>
-void hexToBytes(const std::string& s, std::span<uint8_t, N> out)
+inline void hexToBytes(const std::string& s, std::span<uint8_t, N> out)
 {
     // No checks on the string length in the compile time version!
     uint64_t start_idx = 0;
@@ -47,13 +49,13 @@ void hexToBytes(const std::string& s, std::span<uint8_t, N> out)
     }
 }
 template<size_t N>
-std::array<uint8_t, N> hexToBytes(const std::string& s)
+inline std::array<uint8_t, N> hexToBytes(const std::string& s)
 {
     std::array<uint8_t, N> out;
     hexToBytes<N>(s, out);
     return out;
 }
-std::vector<uint8_t> hexToBytes(const std::string& s)
+inline std::vector<uint8_t> hexToBytes(const std::string& s)
 {
     uint64_t start_idx = 0;
     if(s[0] == '0' && s[1] == 'x')
@@ -77,20 +79,28 @@ std::vector<uint8_t> hexToBytes(const std::string& s)
 
     return bytes;
 }
+// custom split() function
+inline std::vector<std::string> split(std::string str, char separator)
+{
+    std::vector<std::string> strings;
+    int start = 0, end = 0;
+    for(size_t i = 0; i <= str.size(); i++)
+    {
+        if(str[i] == separator || i == str.size())
+        {
+            end = i;
+            std::string tmp = "";
+            tmp.append(str, start, end - start);
+            strings.push_back(tmp);
+            start = end + 1;
+        }
+    }
+    return strings;
+}
 
 namespace bls12_381
 {
-    std::tuple<uint64_t, uint64_t> Sub64(
-        const uint64_t& x,
-        const uint64_t& y,
-        const uint64_t& borrow
-    )
-    {
-        uint64_t diff = x - y - borrow;
-        uint64_t borrowOut = (diff > x);
-        return {diff, borrowOut};
-    }
-    std::array<uint64_t, 8> longScalarFromBytesBE(const std::array<uint8_t, 8*8>& in)
+    inline std::array<uint64_t, 8> longScalarFromBytesBE(const std::array<uint8_t, 8*8>& in)
     {
         std::array<uint64_t, 8> out;
         for(uint64_t i = 0; i < 8; i++)
@@ -148,18 +158,240 @@ namespace bls12_381
             memcpy(out.data(), in.data(), 4 * sizeof(uint64_t));
             return out;
         }
+        static scalar fromBytesLE(const std::vector<uint8_t>& in)
+        {
+            scalar out;
+            memcpy(out.data(), in.data(), 4 * sizeof(uint64_t));
+            return out;
+        }
         bool equal(const scalar& e) const
         {
             return w0 == e.w0 && w1 == e.w1 && w2 == e.w2 && w3 == e.w3;
         }
+        static scalar zero()
+        {
+            return scalar(0, 0, 0, 0);
+        }
+        static scalar one()
+        {
+            return R;
+        }
+        static scalar montgomery_reduce(
+            uint64_t r0,
+            uint64_t r1,
+            uint64_t r2,
+            uint64_t r3,
+            uint64_t r4,
+            uint64_t r5,
+            uint64_t r6,
+            uint64_t r7
+        )
+        {
+            // The Montgomery reduction here is based on Algorithm 14.32 in
+            // Handbook of Applied Cryptography: http://cacr.uwaterloo.ca/hac/about/chap14.pdf
+            uint64_t k = r0 * INV;
+            uint64_t carry = static_cast<uint64_t>((static_cast<uint128_t>(r0) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w0)) >> 64);
+            uint128_t tmp = static_cast<uint128_t>(r1) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w1) + static_cast<uint128_t>(carry);
+            r1 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r2) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w2) + static_cast<uint128_t>(carry);
+            r2 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w3) + static_cast<uint128_t>(carry);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            uint64_t t = r4 + carry;
+            uint64_t carry2 = (t < r4);
+            r4 = t;
 
-        static const scalar Q;
+            k = r1 * INV;
+            carry = static_cast<uint64_t>((static_cast<uint128_t>(r1) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w0)) >> 64);
+            tmp = static_cast<uint128_t>(r2) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w1) + static_cast<uint128_t>(carry);
+            r2 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w2) + static_cast<uint128_t>(carry);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w3) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            t = r5 + carry2;
+            uint64_t tt = t + carry;
+            carry2 = (t < r5) + (tt < t);
+            r5 = tt;
+
+            k = r2 * INV;
+            carry = static_cast<uint64_t>((static_cast<uint128_t>(r2) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w0)) >> 64);
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w1) + static_cast<uint128_t>(carry);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w2) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r5) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w3) + static_cast<uint128_t>(carry);
+            r5 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            t = r6 + carry2;
+            tt = t + carry;
+            carry2 = (t < r6) + (tt < t);
+            r6 = tt;
+
+            k = r3 * INV;
+            carry = static_cast<uint64_t>((static_cast<uint128_t>(r3) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w0)) >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w1) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r5) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w2) + static_cast<uint128_t>(carry);
+            r5 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r6) + static_cast<uint128_t>(k) * static_cast<uint128_t>(Q.w3) + static_cast<uint128_t>(carry);
+            r6 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            t = r7 + carry2;
+            tt = t + carry;
+            carry2 = (t < r7) + (tt < t);
+            r7 = tt;
+
+            // subtract modulus if result is greater than or equal Q
+            if(r7 > Q.w3 || (r7 == Q.w3 && r6 > Q.w2) || (r7 == Q.w3 && r6 == Q.w2 && r5 > Q.w1) || (r7 == Q.w3 && r6 == Q.w2 && r5 == Q.w1 && r4 >= Q.w0))
+            {
+                return scalar(r4, r5, r6, r7).sub(Q);
+            }
+            return scalar(r4, r5, r6, r7);
+        }
+        scalar mul(const scalar& rhs) const
+        {
+            uint128_t tmp = static_cast<uint128_t>(w0) * static_cast<uint128_t>(rhs.w0);
+            uint64_t r0 = static_cast<uint64_t>(tmp);
+            uint64_t carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(w0) * static_cast<uint128_t>(rhs.w1) + static_cast<uint128_t>(carry);
+            uint64_t r1 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(w0) * static_cast<uint128_t>(rhs.w2) + static_cast<uint128_t>(carry);
+            uint64_t r2 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(w0) * static_cast<uint128_t>(rhs.w3) + static_cast<uint128_t>(carry);
+            uint64_t r3 = static_cast<uint64_t>(tmp);
+            uint64_t r4 = static_cast<uint64_t>(tmp >> 64);
+
+            tmp = static_cast<uint128_t>(r1) + static_cast<uint128_t>(w1) * static_cast<uint128_t>(rhs.w0);
+            r1 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r2) + static_cast<uint128_t>(w1) * static_cast<uint128_t>(rhs.w1) + static_cast<uint128_t>(carry);
+            r2 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(w1) * static_cast<uint128_t>(rhs.w2) + static_cast<uint128_t>(carry);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(w1) * static_cast<uint128_t>(rhs.w3) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            uint64_t r5 = static_cast<uint64_t>(tmp >> 64);
+
+            tmp = static_cast<uint128_t>(r2) + static_cast<uint128_t>(w2) * static_cast<uint128_t>(rhs.w0);
+            r2 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(w2) * static_cast<uint128_t>(rhs.w1) + static_cast<uint128_t>(carry);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(w2) * static_cast<uint128_t>(rhs.w2) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r5) + static_cast<uint128_t>(w2) * static_cast<uint128_t>(rhs.w3) + static_cast<uint128_t>(carry);
+            r5 = static_cast<uint64_t>(tmp);
+            uint64_t r6 = static_cast<uint64_t>(tmp >> 64);
+
+            tmp = static_cast<uint128_t>(r3) + static_cast<uint128_t>(w3) * static_cast<uint128_t>(rhs.w0);
+            r3 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r4) + static_cast<uint128_t>(w3) * static_cast<uint128_t>(rhs.w1) + static_cast<uint128_t>(carry);
+            r4 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r5) + static_cast<uint128_t>(w3) * static_cast<uint128_t>(rhs.w2) + static_cast<uint128_t>(carry);
+            r5 = static_cast<uint64_t>(tmp);
+            carry = static_cast<uint64_t>(tmp >> 64);
+            tmp = static_cast<uint128_t>(r6) + static_cast<uint128_t>(w3) * static_cast<uint128_t>(rhs.w3) + static_cast<uint128_t>(carry);
+            r6 = static_cast<uint64_t>(tmp);
+            uint64_t r7 = static_cast<uint64_t>(tmp >> 64);
+
+            return montgomery_reduce(r0, r1, r2, r3, r4, r5, r6, r7);
+        }
+        scalar add(const scalar& rhs) const
+        {
+            uint64_t d0 = w0 + rhs.w0;
+            uint64_t carry = (d0 < w0);
+            uint64_t tmp = w1 + carry;
+            uint64_t d1 = tmp + rhs.w1;
+            carry = (tmp < w1) + (d1 < tmp);
+            tmp = w2 + carry;
+            uint64_t d2 = tmp + rhs.w2;
+            carry = (tmp < w2) + (d2 < tmp);
+            tmp = w3 + carry;
+            uint64_t d3 = tmp + rhs.w3;
+
+            // subtract modulus if result is greater than or equal Q
+            if(d3 > Q.w3 || (d3 == Q.w3 && d2 > Q.w2) || (d3 == Q.w3 && d2 == Q.w2 && d1 > Q.w1) || (d3 == Q.w3 && d2 == Q.w2 && d1 == Q.w1 && d0 >= Q.w0))
+            {
+                return scalar(d0, d1, d2, d3).sub(Q);
+            }
+            return scalar(d0, d1, d2, d3);
+        }
+        scalar sub(const scalar& rhs) const
+        {
+            uint64_t d0 = w0 - rhs.w0;
+            uint64_t borrow = d0 > w0;
+            uint64_t tmp = w1 - borrow;
+            uint64_t d1 = tmp - rhs.w1;
+            borrow = (tmp > w1) + (d1 > tmp);
+            tmp = w2 - borrow;
+            uint64_t d2 = tmp - rhs.w2;
+            borrow = (tmp > w2) + (d2 > tmp);
+            tmp = w3 - borrow;
+            uint64_t d3 = tmp - rhs.w3;
+            borrow = (tmp > w3) + (d3 > tmp);
+
+            // if underflow occurred add modulus
+            if(borrow > 0)
+            {
+                uint64_t e0 = d0 + Q.w0;
+                uint64_t carry = (e0 < d0);
+                tmp = d1 + carry;
+                uint64_t e1 = tmp + Q.w1;
+                carry = (tmp < d1) + (e1 < tmp);
+                tmp = d2 + carry;
+                uint64_t e2 = tmp + Q.w2;
+                carry = (tmp < d2) + (e2 < tmp);
+                tmp = d3 + carry;
+                uint64_t e3 = tmp + Q.w3;
+
+                return scalar(e0, e1, e2, e3);
+            }
+
+            return scalar(d0, d1, d2, d3);
+        }
+
+        static const scalar Q;          // Constant representing the modulus q = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001
+        static const uint64_t INV;      // INV = -(q^{-1} mod 2^64) mod 2^64
+        static const scalar R;          // R = 2^256 mod q
+        static const scalar EDWARDS_D2; // Jubjub: 2*d with d = -(10240/10241)
     };
-    const scalar scalar::Q = {
+    inline const scalar scalar::Q = {
         0xffff'ffff'0000'0001,
         0x53bd'a402'fffe'5bfe,
         0x3339'd808'09a1'd805,
         0x73ed'a753'299d'7d48
+    };
+    inline const uint64_t scalar::INV = 0xFFFF'FFFE'FFFF'FFFF;
+    inline const scalar scalar::R = {
+        0x0000'0001'ffff'fffe,
+        0x5884'b7fa'0003'4802,
+        0x998c'4fef'ecbc'4ff5,
+        0x1824'b159'acc5'056f
+    };
+    inline const scalar scalar::EDWARDS_D2 = {
+        0x54A4'48AC'72E9'ED5F,
+        0xA51B'EFDB'1B37'3967,
+        0xC0D8'1F21'7B4A'799E,
+        0x3C04'45FE'D27E'CF14
     };
 
     class fp
@@ -261,13 +493,22 @@ namespace bls12_381
                 return *this;
             }
             fp z;
-            uint64_t borrow, _;
-            std::tie(z.w0, borrow) = Sub64(fp::MODULUS.w0, this->w0, 0);
-            std::tie(z.w1, borrow) = Sub64(fp::MODULUS.w1, this->w1, borrow);
-            std::tie(z.w2, borrow) = Sub64(fp::MODULUS.w2, this->w2, borrow);
-            std::tie(z.w3, borrow) = Sub64(fp::MODULUS.w3, this->w3, borrow);
-            std::tie(z.w4, borrow) = Sub64(fp::MODULUS.w4, this->w4, borrow);
-            std::tie(z.w5, _)      = Sub64(fp::MODULUS.w5, this->w5, borrow);
+            z.w0 = fp::MODULUS.w0 - w0;
+            uint64_t borrow = z.w0 > fp::MODULUS.w0;
+            uint64_t tmp = fp::MODULUS.w1 - borrow;
+            z.w1 = tmp - w1;
+            borrow = (tmp > fp::MODULUS.w1) + (z.w1 > tmp);
+            tmp = fp::MODULUS.w2 - borrow;
+            z.w2 = tmp - w2;
+            borrow = (tmp > fp::MODULUS.w2) + (z.w2 > tmp);
+            tmp = fp::MODULUS.w3 - borrow;
+            z.w3 = tmp - w3;
+            borrow = (tmp > fp::MODULUS.w3) + (z.w3 > tmp);
+            tmp = fp::MODULUS.w4 - borrow;
+            z.w4 = tmp - w4;
+            borrow = (tmp > fp::MODULUS.w4) + (z.w4 > tmp);
+            tmp = fp::MODULUS.w5 - borrow;
+            z.w5 = tmp - w5;
             return z;
         }
         static fp modPrime(const std::array<uint64_t, 8>& k)
@@ -280,7 +521,7 @@ namespace bls12_381
         static const fp MODULUS;
         static const fp R1;
     };
-    const fp fp::MODULUS = fp(
+    inline const fp fp::MODULUS = fp(
         0xb9fe'ffff'ffff'aaab,
         0x1eab'fffe'b153'ffff,
         0x6730'd2a0'f6b0'f624,
@@ -288,13 +529,22 @@ namespace bls12_381
         0x4b1b'a7b6'434b'acd7,
         0x1a01'11ea'397f'e69a
     );
-    const fp fp::R1 = fp(
-        0x7609'0000'0002'fffd,
-        0xebf4'000b'c40c'0002,
-        0x5f48'9857'53c7'58ba,
-        0x77ce'5853'7052'5745,
-        0x5c07'1a97'a256'ec6d,
-        0x15f6'5ec3'fa80'e493
+    //inline const fp fp::R1 = fp(
+    //    0x7609'0000'0002'fffd,
+    //    0xebf4'000b'c40c'0002,
+    //    0x5f48'9857'53c7'58ba,
+    //    0x77ce'5853'7052'5745,
+    //    0x5c07'1a97'a256'ec6d,
+    //    0x15f6'5ec3'fa80'e493
+    //);
+    // montgomery encoding
+    inline const fp fp::R1 = fp(
+        0x0000'0000'0000'0001,
+        0x0000'0000'0000'0000,
+        0x0000'0000'0000'0000,
+        0x0000'0000'0000'0000,
+        0x0000'0000'0000'0000,
+        0x0000'0000'0000'0000
     );
 
     class fp2
@@ -478,6 +728,10 @@ namespace bls12_381
             g1 p = g1(x, y);
             return p;
         }
+        static g1 one()
+        {
+            return BASE;
+        }
         g1 add(const g1& e) const
         {
             g1 out;
@@ -522,9 +776,20 @@ namespace bls12_381
             return out;
         }
 
+        static const g1 BASE;
+        static const g1 BASE_NEG;
         static const scalar cofactorEFF;
     };
-    const scalar g1::cofactorEFF = {0xd201000000010001, 0, 0, 0};
+    // affine, montgomery encoded
+    inline const g1 g1::BASE = g1(
+        fp(0xfb3af00adb22c6bb, 0x6c55e83ff97a1aef, 0xa14e3a3f171bac58, 0xc3688c4f9774b905, 0x2695638c4fa9ac0f, 0x17f1d3a73197d794),
+        fp(0x0caa232946c5e7e1, 0xd03cc744a2888ae4, 0x00db18cb2c04b3ed, 0xfcf5e095d5d00af6, 0xa09e30ed741d8ae4, 0x08b3f481e3aaa0f1)
+    );
+    inline const g1 g1::BASE_NEG = g1(
+        fp(0xfb3af00adb22c6bb, 0x6c55e83ff97a1aef, 0xa14e3a3f171bac58, 0xc3688c4f9774b905, 0x2695638c4fa9ac0f, 0x17f1d3a73197d794),
+        fp(0xad54dcd6b939c2ca, 0x4e6f38ba0ecb751b, 0x6655b9d5caac4236, 0x67816aef1db507c9, 0xaa7d76c8cf2e21f2, 0x114d1d6855d545a8)
+    );
+    inline const scalar g1::cofactorEFF = {0xd201000000010001, 0, 0, 0};
 
     // affine g2 type
     class g2
@@ -560,6 +825,10 @@ namespace bls12_381
             fp2 y = fp2::fromBytesLE(std::span<const uint8_t, sizeof(fp2)>(&in[96], &in[192]));
             g2 p = g2(x, y);
             return p;
+        }
+        static g2 one()
+        {
+            return BASE;
         }
         g2 add(const g2& e) const
         {
@@ -600,11 +869,24 @@ namespace bls12_381
             eosio::bls_g2_map(e, out);
             return out;
         }
+
+        static const g2 BASE;
     };
+    // affine, montgomery encoded
+    inline const g2 g2::BASE = g2(
+        fp2(
+            fp(0xd48056c8c121bdb8, 0x0bac0326a805bbef, 0xb4510b647ae3d177, 0xc6e47ad4fa403b02, 0x260805272dc51051, 0x024aa2b2f08f0a91),
+            fp(0xe5ac7d055d042b7e, 0x334cf11213945d57, 0xb5da61bbdc7f5049, 0x596bd0d09920b61a, 0x7dacd3a088274f65, 0x13e02b6052719f60)
+        ),
+        fp2(
+            fp(0xe193548608b82801, 0x923ac9cc3baca289, 0x6d429a695160d12c, 0xadfd9baa8cbdd3a7, 0x8cc9cdc6da2e351a, 0x0ce5d527727d6e11),
+            fp(0xaaa9075ff05f79be, 0x3f370d275cec1da1, 0x267492ab572e99ab, 0xcb3e287e85a763af, 0x32acd2b02bc28b99, 0x0606c4a02ea734cc)
+        )
+    );
 
     namespace pairing
     {
-        fp12 calculate(const g1 g1_points[], const g2 g2_points[], const uint32_t num)
+        inline fp12 calculate(const g1 g1_points[], const g2 g2_points[], const uint32_t num)
         {
             fp12 f;
             eosio::bls_pairing(reinterpret_cast<const eosio::bls_g1*>(g1_points), reinterpret_cast<const eosio::bls_g2*>(g2_points), num, f);
@@ -613,9 +895,9 @@ namespace bls12_381
     }
 
     // signatures.cpp functions
-    
+
     // Construct an extensible-output function based on SHA256
-    void xmd_sh256(
+    inline void xmd_sh256(
         uint8_t *buf,
         int buf_len,
         const uint8_t *in,
@@ -666,7 +948,7 @@ namespace bls12_381
         }
     }
 
-    g2 fromMessage(const std::vector<uint8_t>& msg, const std::string& dst)
+    inline g2 fromMessage(const std::vector<uint8_t>& msg, const std::string& dst)
     {
         uint8_t buf[4 * 64];
         xmd_sh256(buf, 4 * 64, msg.data(), msg.size(), reinterpret_cast<const uint8_t*>(dst.c_str()), dst.length());
@@ -803,7 +1085,7 @@ namespace bls12_381
             }
         };
 
-        PreparedVerifyingKey prepare_verifying_key(const VerifyingKey& vk)
+        inline PreparedVerifyingKey prepare_verifying_key(const VerifyingKey& vk)
         {
             return PreparedVerifyingKey(
                 pairing::calculate(&vk.alpha_g1, &vk.beta_g2, 1),
@@ -813,7 +1095,7 @@ namespace bls12_381
             );
         }
 
-        bool verify_proof(
+        inline bool verify_proof(
             const PreparedVerifyingKey& pvk,
             const Proof& proof,
             const std::vector<scalar>& public_inputs
@@ -853,3 +1135,66 @@ namespace bls12_381
     static_assert(sizeof(std::array<uint64_t, 8>) == sizeof(eosio::bls_s));
     static_assert(sizeof(uint64_t[8]) == sizeof(eosio::bls_s));
 } // namespace bls12_381
+
+namespace jubjub
+{
+    class AffineNielsPoint
+    {
+        public:
+        bls12_381::scalar v_plus_u;
+        bls12_381::scalar v_minus_u;
+        bls12_381::scalar t2d;
+
+        AffineNielsPoint() : v_plus_u(bls12_381::scalar()), v_minus_u(bls12_381::scalar()), t2d(bls12_381::scalar()) {}
+        AffineNielsPoint(const bls12_381::scalar& u, const bls12_381::scalar& v) : v_plus_u(v.add(u)), v_minus_u(v.sub(u)), t2d(u.mul(v).mul(bls12_381::scalar::EDWARDS_D2)) {} // from affine point (u, v)
+    };
+
+    class ExtendedPoint
+    {
+        public:
+        bls12_381::scalar u;
+        bls12_381::scalar v;
+        bls12_381::scalar z;
+        bls12_381::scalar t1;
+        bls12_381::scalar t2;
+
+        ExtendedPoint() : u(bls12_381::scalar()), v(bls12_381::scalar()), z(bls12_381::scalar()), t1(bls12_381::scalar()), t2(bls12_381::scalar()) {}
+        ExtendedPoint(const bls12_381::scalar& u, const bls12_381::scalar& v, const bls12_381::scalar& z, const bls12_381::scalar& t1, const bls12_381::scalar& t2) : u(u), v(v), z(z), t1(t1), t2(t2) {}
+        ExtendedPoint(const bls12_381::scalar& u, const bls12_381::scalar& v) : u(u), v(v), z(bls12_381::scalar::one()), t1(u), t2(v) {} // from affine point (u, v)
+
+        ExtendedPoint add(const AffineNielsPoint& rhs) const
+        {
+            // This is identical to the addition formula for `ExtendedNielsPoint`,
+            // except we can assume that `rhs.z` is one, so that we perform
+            // 7 multiplications.
+            bls12_381::scalar a = v.sub(u).mul(rhs.v_minus_u);
+            bls12_381::scalar b = v.add(u).mul(rhs.v_plus_u);
+            bls12_381::scalar c = t1.mul(t2).mul(rhs.t2d);
+            bls12_381::scalar d = z.add(z);
+
+            // The remaining arithmetic is exactly the process of converting
+            // from a completed point to an extended point.
+            bls12_381::scalar cp_u = b.sub(a);
+            bls12_381::scalar cp_v = b.add(a);
+            bls12_381::scalar cp_z = d.add(c);
+            bls12_381::scalar cp_t = d.sub(c);
+
+            return ExtendedPoint(
+                cp_u.mul(cp_t),
+                cp_v.mul(cp_z),
+                cp_z.mul(cp_t),
+                cp_u,
+                cp_v
+            );
+        }
+
+        inline bool equal(const ExtendedPoint& rhs) const
+        {
+            // (u/z, v/z) = (u'/z', v'/z') is implied by
+            //      (uz'z = u'z'z) and
+            //      (vz'z = v'z'z)
+            // as z and z' are always nonzero.
+            return u.mul(rhs.z).equal(rhs.u.mul(z)) && v.mul(rhs.z).equal(rhs.v.mul(z));
+        }
+    };
+}
