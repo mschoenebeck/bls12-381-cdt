@@ -9,8 +9,11 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #ifndef __eosio_cdt__
@@ -150,6 +153,239 @@ inline std::vector<std::string> split(std::string str, char separator)
 
 namespace bls12_381
 {
+    namespace sizes
+    {
+        inline constexpr size_t scalar_bytes       = 32;
+        inline constexpr size_t fp_bytes           = 48;
+        inline constexpr size_t fp2_bytes          = 96;
+        inline constexpr size_t g1_affine_le_bytes = 96;
+        inline constexpr size_t g2_affine_le_bytes = 192;
+        inline constexpr size_t gt_bytes           = 576;
+    }
+
+    namespace ciphersuites
+    {
+        inline constexpr std::string_view basic_signature_g2 =
+            "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    }
+
+    enum class signature_suite : uint8_t
+    {
+        basic
+    };
+
+    inline constexpr std::string_view ciphersuite_dst(const signature_suite)
+    {
+        return ciphersuites::basic_signature_g2;
+    }
+
+    enum class bls_errc : uint8_t
+    {
+        none,
+        empty_input,
+        invalid_length,
+        length_mismatch,
+        count_overflow,
+        malformed_g1,
+        malformed_g2,
+        identity_point,
+        wrong_subgroup,
+        duplicate_message,
+        host_operation_failed,
+        unsupported_environment
+    };
+
+    struct bls_error
+    {
+        bls_errc code = bls_errc::none;
+        int32_t host_status = 0;
+    };
+
+    enum class signature_verdict : uint8_t
+    {
+        invalid,
+        valid
+    };
+
+    template<class T>
+    class result
+    {
+        public:
+        static result success(T value)
+        {
+            return result(std::move(value));
+        }
+
+        static result failure(const bls_errc code, const int32_t host_status = 0)
+        {
+            return result(bls_error{code, host_status});
+        }
+
+        bool has_value() const
+        {
+            return value_.has_value();
+        }
+
+        explicit operator bool() const
+        {
+            return has_value();
+        }
+
+        const T& value() const
+        {
+            eosio::check(has_value(), "bls12-381-cdt: attempted to access a failed result");
+            return *value_;
+        }
+
+        T& value()
+        {
+            eosio::check(has_value(), "bls12-381-cdt: attempted to access a failed result");
+            return *value_;
+        }
+
+        T take_value()
+        {
+            eosio::check(has_value(), "bls12-381-cdt: attempted to access a failed result");
+            T out = std::move(*value_);
+            value_.reset();
+            return out;
+        }
+
+        const bls_error& error() const
+        {
+            return error_;
+        }
+
+        private:
+        explicit result(T value) : value_(std::move(value)), error_{} {}
+        explicit result(const bls_error error) : value_(std::nullopt), error_(error) {}
+
+        std::optional<T> value_;
+        bls_error error_;
+    };
+
+    namespace host_detail
+    {
+        template<class T>
+        inline result<T> host_failure(const int32_t status)
+        {
+            return result<T>::failure(bls_errc::host_operation_failed, status);
+        }
+
+        inline bool valid_count_for_host(const size_t count, const size_t element_size)
+        {
+            return count > 0 &&
+                   count <= std::numeric_limits<uint32_t>::max() &&
+                   count <= std::numeric_limits<uint32_t>::max() / element_size;
+        }
+
+        inline result<eosio::bls_g1> g1_add(const eosio::bls_g1& lhs, const eosio::bls_g1& rhs)
+        {
+            eosio::bls_g1 out{};
+            const int32_t status = eosio::bls_g1_add(lhs, rhs, out);
+            if(status != 0) return host_failure<eosio::bls_g1>(status);
+            return result<eosio::bls_g1>::success(out);
+        }
+
+        inline result<eosio::bls_g2> g2_add(const eosio::bls_g2& lhs, const eosio::bls_g2& rhs)
+        {
+            eosio::bls_g2 out{};
+            const int32_t status = eosio::bls_g2_add(lhs, rhs, out);
+            if(status != 0) return host_failure<eosio::bls_g2>(status);
+            return result<eosio::bls_g2>::success(out);
+        }
+
+        inline result<eosio::bls_g1> g1_weighted_sum(
+            const eosio::bls_g1 points[],
+            const eosio::bls_scalar scalars[],
+            const size_t count
+        )
+        {
+            if(!valid_count_for_host(count, sizeof(eosio::bls_g1)) ||
+               !valid_count_for_host(count, sizeof(eosio::bls_scalar)))
+            {
+                return result<eosio::bls_g1>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
+            }
+            eosio::bls_g1 out{};
+            const int32_t status = eosio::bls_g1_weighted_sum(points, scalars, static_cast<uint32_t>(count), out);
+            if(status != 0) return host_failure<eosio::bls_g1>(status);
+            return result<eosio::bls_g1>::success(out);
+        }
+
+        inline result<eosio::bls_g2> g2_weighted_sum(
+            const eosio::bls_g2 points[],
+            const eosio::bls_scalar scalars[],
+            const size_t count
+        )
+        {
+            if(!valid_count_for_host(count, sizeof(eosio::bls_g2)) ||
+               !valid_count_for_host(count, sizeof(eosio::bls_scalar)))
+            {
+                return result<eosio::bls_g2>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
+            }
+            eosio::bls_g2 out{};
+            const int32_t status = eosio::bls_g2_weighted_sum(points, scalars, static_cast<uint32_t>(count), out);
+            if(status != 0) return host_failure<eosio::bls_g2>(status);
+            return result<eosio::bls_g2>::success(out);
+        }
+
+        inline result<eosio::bls_gt> pairing(
+            const eosio::bls_g1 g1_points[],
+            const eosio::bls_g2 g2_points[],
+            const size_t count
+        )
+        {
+            if(!valid_count_for_host(count, sizeof(eosio::bls_g1)) ||
+               !valid_count_for_host(count, sizeof(eosio::bls_g2)))
+            {
+                return result<eosio::bls_gt>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
+            }
+            eosio::bls_gt out{};
+            const int32_t status = eosio::bls_pairing(g1_points, g2_points, static_cast<uint32_t>(count), out);
+            if(status != 0) return host_failure<eosio::bls_gt>(status);
+            return result<eosio::bls_gt>::success(out);
+        }
+
+        inline result<eosio::bls_g1> g1_map(const eosio::bls_fp& element)
+        {
+            eosio::bls_g1 out{};
+            const int32_t status = eosio::bls_g1_map(element, out);
+            if(status != 0) return host_failure<eosio::bls_g1>(status);
+            return result<eosio::bls_g1>::success(out);
+        }
+
+        inline result<eosio::bls_g2> g2_map(const eosio::bls_fp2& element)
+        {
+            eosio::bls_g2 out{};
+            const int32_t status = eosio::bls_g2_map(element, out);
+            if(status != 0) return host_failure<eosio::bls_g2>(status);
+            return result<eosio::bls_g2>::success(out);
+        }
+
+        inline result<eosio::bls_fp> fp_mod(const eosio::bls_s& value)
+        {
+            eosio::bls_fp out{};
+            const int32_t status = eosio::bls_fp_mod(value, out);
+            if(status != 0) return host_failure<eosio::bls_fp>(status);
+            return result<eosio::bls_fp>::success(out);
+        }
+
+        inline result<eosio::bls_fp> fp_mul(const eosio::bls_fp& lhs, const eosio::bls_fp& rhs)
+        {
+            eosio::bls_fp out{};
+            const int32_t status = eosio::bls_fp_mul(lhs, rhs, out);
+            if(status != 0) return host_failure<eosio::bls_fp>(status);
+            return result<eosio::bls_fp>::success(out);
+        }
+
+        inline result<eosio::bls_fp> fp_exp(const eosio::bls_fp& base, const eosio::bls_s& exponent)
+        {
+            eosio::bls_fp out{};
+            const int32_t status = eosio::bls_fp_exp(base, exponent, out);
+            if(status != 0) return host_failure<eosio::bls_fp>(status);
+            return result<eosio::bls_fp>::success(out);
+        }
+    }
     inline std::array<uint64_t, 8> longScalarFromBytesBE(const std::array<uint8_t, 8*8>& in)
     {
         std::array<uint64_t, 8> out;
@@ -612,8 +848,10 @@ namespace bls12_381
         }
         static fp modPrime(const std::array<uint64_t, 8>& k)
         {
+            const auto checked = host_detail::fp_mod(*reinterpret_cast<const eosio::bls_s*>(&k));
+            eosio::check(checked.has_value(), "fp::modPrime: bls_fp_mod failed");
             fp out;
-            eosio::bls_fp_mod(*reinterpret_cast<const eosio::bls_s*>(&k), out);
+            memcpy(out.data(), checked.value().data(), sizeof(fp));
             return out;
         }
 
@@ -827,14 +1065,26 @@ namespace bls12_381
             g1 p = g1(x, y);
             return p;
         }
+        std::array<uint8_t, sizes::g1_affine_le_bytes> toAffineBytesLE() const
+        {
+            std::array<uint8_t, sizes::g1_affine_le_bytes> out{};
+            memcpy(out.data(), data(), out.size());
+            return out;
+        }
+        bool isIdentity() const
+        {
+            return x.isZero() && y.isZero();
+        }
         static g1 one()
         {
             return BASE;
         }
         g1 add(const g1& e) const
         {
+            const auto checked = host_detail::g1_add(*this, e);
+            eosio::check(checked.has_value(), "g1::add: bls_g1_add failed");
             g1 out;
-            eosio::bls_g1_add(*this, e, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g1));
             return out;
         }
         g1 dbl() const
@@ -858,20 +1108,34 @@ namespace bls12_381
         }
         g1 mulScalar(const scalar& s) const
         {
+            const auto checked = host_detail::g1_weighted_sum(
+                reinterpret_cast<const eosio::bls_g1*>(this->data()),
+                reinterpret_cast<const eosio::bls_scalar*>(s.data()),
+                1
+            );
+            eosio::check(checked.has_value(), "g1::mulScalar: bls_g1_weighted_sum failed");
             g1 out;
-            eosio::bls_g1_weighted_sum(reinterpret_cast<const eosio::bls_g1*>(this->data()), reinterpret_cast<const eosio::bls_scalar*>(s.data()), 1, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g1));
             return out;
         }
         static g1 multiExp(const g1 points[], const scalar scalars[], const uint32_t num)
         {
+            const auto checked = host_detail::g1_weighted_sum(
+                reinterpret_cast<const eosio::bls_g1*>(points),
+                reinterpret_cast<const eosio::bls_scalar*>(scalars),
+                num
+            );
+            eosio::check(checked.has_value(), "g1::multiExp: bls_g1_weighted_sum failed");
             g1 out;
-            eosio::bls_g1_weighted_sum(reinterpret_cast<const eosio::bls_g1*>(points), reinterpret_cast<const eosio::bls_scalar*>(scalars), num, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g1));
             return out;
         }
         static g1 mapToCurve(const fp& e)
         {
+            const auto checked = host_detail::g1_map(e);
+            eosio::check(checked.has_value(), "g1::mapToCurve: bls_g1_map failed");
             g1 out;
-            eosio::bls_g1_map(e, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g1));
             return out;
         }
 
@@ -925,14 +1189,26 @@ namespace bls12_381
             g2 p = g2(x, y);
             return p;
         }
+        std::array<uint8_t, sizes::g2_affine_le_bytes> toAffineBytesLE() const
+        {
+            std::array<uint8_t, sizes::g2_affine_le_bytes> out{};
+            memcpy(out.data(), data(), out.size());
+            return out;
+        }
+        bool isIdentity() const
+        {
+            return x.isZero() && y.isZero();
+        }
         static g2 one()
         {
             return BASE;
         }
         g2 add(const g2& e) const
         {
+            const auto checked = host_detail::g2_add(*this, e);
+            eosio::check(checked.has_value(), "g2::add: bls_g2_add failed");
             g2 out;
-            eosio::bls_g2_add(*this, e, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g2));
             return out;
         }
         g2 dbl() const
@@ -952,20 +1228,34 @@ namespace bls12_381
         }
         g2 mulScalar(const scalar& s) const
         {
+            const auto checked = host_detail::g2_weighted_sum(
+                reinterpret_cast<const eosio::bls_g2*>(this->data()),
+                reinterpret_cast<const eosio::bls_scalar*>(s.data()),
+                1
+            );
+            eosio::check(checked.has_value(), "g2::mulScalar: bls_g2_weighted_sum failed");
             g2 out;
-            eosio::bls_g2_weighted_sum(reinterpret_cast<const eosio::bls_g2*>(this->data()), reinterpret_cast<const eosio::bls_scalar*>(s.data()), 1, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g2));
             return out;
         }
         static g2 multiExp(const g2 points[], const scalar scalars[], const uint32_t num)
         {
+            const auto checked = host_detail::g2_weighted_sum(
+                reinterpret_cast<const eosio::bls_g2*>(points),
+                reinterpret_cast<const eosio::bls_scalar*>(scalars),
+                num
+            );
+            eosio::check(checked.has_value(), "g2::multiExp: bls_g2_weighted_sum failed");
             g2 out;
-            eosio::bls_g2_weighted_sum(reinterpret_cast<const eosio::bls_g2*>(points), reinterpret_cast<const eosio::bls_scalar*>(scalars), num, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g2));
             return out;
         }
         static g2 mapToCurve(const fp2& e)
         {
+            const auto checked = host_detail::g2_map(e);
+            eosio::check(checked.has_value(), "g2::mapToCurve: bls_g2_map failed");
             g2 out;
-            eosio::bls_g2_map(e, out);
+            memcpy(out.data(), checked.value().data(), sizeof(g2));
             return out;
         }
 
@@ -983,12 +1273,196 @@ namespace bls12_381
         )
     );
 
+    class validated_g1_affine_le
+    {
+        public:
+        static result<validated_g1_affine_le> from_point(const g1& point)
+        {
+            eosio::bls_g1 host_point{};
+            memcpy(host_point.data(), point.data(), host_point.size());
+            const eosio::bls_g1 identity{};
+
+            // Addition with the identity asks the host to parse, canonicalize and
+            // curve-check the affine input without changing the represented point.
+            const auto canonical = host_detail::g1_add(host_point, identity);
+            if(!canonical)
+            {
+                return result<validated_g1_affine_le>::failure(
+                    bls_errc::malformed_g1,
+                    canonical.error().host_status
+                );
+            }
+
+            g1 checked_point;
+            memcpy(checked_point.data(), canonical.value().data(), sizeof(g1));
+            if(checked_point.isIdentity())
+            {
+                return result<validated_g1_affine_le>::failure(bls_errc::identity_point);
+            }
+
+            eosio::bls_scalar group_order{};
+            memcpy(group_order.data(), scalar::Q.data(), group_order.size());
+            const auto subgroup_product = host_detail::g1_weighted_sum(
+                &canonical.value(),
+                &group_order,
+                1
+            );
+            if(!subgroup_product)
+            {
+                return result<validated_g1_affine_le>::failure(
+                    bls_errc::host_operation_failed,
+                    subgroup_product.error().host_status
+                );
+            }
+
+            g1 subgroup_check;
+            memcpy(subgroup_check.data(), subgroup_product.value().data(), sizeof(g1));
+            if(!subgroup_check.isIdentity())
+            {
+                return result<validated_g1_affine_le>::failure(bls_errc::wrong_subgroup);
+            }
+
+            return result<validated_g1_affine_le>::success(validated_g1_affine_le(checked_point));
+        }
+
+        static result<validated_g1_affine_le> fromAffineBytesLE(const std::span<const uint8_t> bytes)
+        {
+            if(bytes.size() != sizes::g1_affine_le_bytes)
+            {
+                return result<validated_g1_affine_le>::failure(bls_errc::invalid_length);
+            }
+            return from_point(g1::fromAffineBytesLE(
+                std::span<const uint8_t, sizes::g1_affine_le_bytes>(bytes.data(), sizes::g1_affine_le_bytes)
+            ));
+        }
+
+        const g1& point() const
+        {
+            return point_;
+        }
+
+        std::array<uint8_t, sizes::g1_affine_le_bytes> toAffineBytesLE() const
+        {
+            return point_.toAffineBytesLE();
+        }
+
+        private:
+        explicit validated_g1_affine_le(const g1& point) : point_(point) {}
+
+        static validated_g1_affine_le from_trusted_point(const g1& point)
+        {
+            return validated_g1_affine_le(point);
+        }
+
+        g1 point_;
+
+        friend result<validated_g1_affine_le> aggregate_public_keys(
+            std::span<const validated_g1_affine_le> keys
+        );
+    };
+
+    class validated_g2_affine_le
+    {
+        public:
+        static result<validated_g2_affine_le> from_point(const g2& point)
+        {
+            eosio::bls_g2 host_point{};
+            memcpy(host_point.data(), point.data(), host_point.size());
+            const eosio::bls_g2 identity{};
+
+            const auto canonical = host_detail::g2_add(host_point, identity);
+            if(!canonical)
+            {
+                return result<validated_g2_affine_le>::failure(
+                    bls_errc::malformed_g2,
+                    canonical.error().host_status
+                );
+            }
+
+            g2 checked_point;
+            memcpy(checked_point.data(), canonical.value().data(), sizeof(g2));
+            if(checked_point.isIdentity())
+            {
+                return result<validated_g2_affine_le>::failure(bls_errc::identity_point);
+            }
+
+            eosio::bls_scalar group_order{};
+            memcpy(group_order.data(), scalar::Q.data(), group_order.size());
+            const auto subgroup_product = host_detail::g2_weighted_sum(
+                &canonical.value(),
+                &group_order,
+                1
+            );
+            if(!subgroup_product)
+            {
+                return result<validated_g2_affine_le>::failure(
+                    bls_errc::host_operation_failed,
+                    subgroup_product.error().host_status
+                );
+            }
+
+            g2 subgroup_check;
+            memcpy(subgroup_check.data(), subgroup_product.value().data(), sizeof(g2));
+            if(!subgroup_check.isIdentity())
+            {
+                return result<validated_g2_affine_le>::failure(bls_errc::wrong_subgroup);
+            }
+
+            return result<validated_g2_affine_le>::success(validated_g2_affine_le(checked_point));
+        }
+
+        static result<validated_g2_affine_le> fromAffineBytesLE(const std::span<const uint8_t> bytes)
+        {
+            if(bytes.size() != sizes::g2_affine_le_bytes)
+            {
+                return result<validated_g2_affine_le>::failure(bls_errc::invalid_length);
+            }
+            return from_point(g2::fromAffineBytesLE(
+                std::span<const uint8_t, sizes::g2_affine_le_bytes>(bytes.data(), sizes::g2_affine_le_bytes)
+            ));
+        }
+
+        const g2& point() const
+        {
+            return point_;
+        }
+
+        std::array<uint8_t, sizes::g2_affine_le_bytes> toAffineBytesLE() const
+        {
+            return point_.toAffineBytesLE();
+        }
+
+        private:
+        explicit validated_g2_affine_le(const g2& point) : point_(point) {}
+
+        static validated_g2_affine_le from_trusted_point(const g2& point)
+        {
+            return validated_g2_affine_le(point);
+        }
+
+        g2 point_;
+
+        friend result<validated_g2_affine_le> hash_to_g2(
+            std::span<const uint8_t> message,
+            std::string_view dst
+        );
+    };
+
+    using binary_message_view = std::span<const uint8_t>;
+
+
     namespace pairing
     {
         inline fp12 calculate(const g1 g1_points[], const g2 g2_points[], const uint32_t num)
         {
+            const auto checked = host_detail::pairing(
+                reinterpret_cast<const eosio::bls_g1*>(g1_points),
+                reinterpret_cast<const eosio::bls_g2*>(g2_points),
+                num
+            );
+            eosio::check(checked.has_value(), "pairing::calculate: bls_pairing failed");
             fp12 f;
-            eosio::bls_pairing(reinterpret_cast<const eosio::bls_g1*>(g1_points), reinterpret_cast<const eosio::bls_g2*>(g2_points), num, f);
+            memcpy(f.data(), checked.value().data(), sizeof(fp12));
             return f;
         }
     }
@@ -1070,41 +1544,269 @@ namespace bls12_381
         }
     }
 
-    inline g2 fromMessage(const std::vector<uint8_t>& msg, const std::string& dst)
+    inline result<validated_g2_affine_le> hash_to_g2(
+        const std::span<const uint8_t> message,
+        const std::string_view dst
+    )
     {
-        eosio::check(msg.size() <= static_cast<size_t>(std::numeric_limits<int>::max()), "fromMessage: message too large");
-        eosio::check(dst.size() <= 255, "fromMessage: DST too large");
+        if(message.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        {
+            return result<validated_g2_affine_le>::failure(bls_errc::invalid_length);
+        }
+        if(dst.size() > 255)
+        {
+            return result<validated_g2_affine_le>::failure(bls_errc::invalid_length);
+        }
 
-        uint8_t buf[4 * 64];
+        std::array<uint8_t, 4 * 64> expanded{};
         xmd_sh256(
-            buf,
-            4 * 64,
-            msg.data(),
-            static_cast<int>(msg.size()),
+            expanded.data(),
+            static_cast<int>(expanded.size()),
+            message.data(),
+            static_cast<int>(message.size()),
             reinterpret_cast<const uint8_t*>(dst.data()),
             static_cast<int>(dst.size())
         );
 
-        std::array<uint64_t, 8> k;
-        fp2 t;
-        g2 p, q, res;
+        std::array<eosio::bls_fp, 4> field_elements{};
+        for(size_t i = 0; i < field_elements.size(); ++i)
+        {
+            std::array<uint8_t, 64> chunk{};
+            memcpy(chunk.data(), expanded.data() + i * chunk.size(), chunk.size());
+            const std::array<uint64_t, 8> scalar = longScalarFromBytesBE(chunk);
 
-        k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf));
-        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c0);
-        k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 64));
-        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c1);
+            eosio::bls_s wide_scalar{};
+            memcpy(wide_scalar.data(), scalar.data(), wide_scalar.size());
+            const auto reduced = host_detail::fp_mod(wide_scalar);
+            if(!reduced)
+            {
+                return result<validated_g2_affine_le>::failure(
+                    bls_errc::host_operation_failed,
+                    reduced.error().host_status
+                );
+            }
+            field_elements[i] = reduced.value();
+        }
 
-        eosio::bls_g2_map(t, p);
+        eosio::bls_fp2 first_field{};
+        first_field[0] = field_elements[0];
+        first_field[1] = field_elements[1];
+        const auto first_point = host_detail::g2_map(first_field);
+        if(!first_point)
+        {
+            return result<validated_g2_affine_le>::failure(
+                bls_errc::host_operation_failed,
+                first_point.error().host_status
+            );
+        }
 
-        k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 2*64));
-        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c0);
-        k = longScalarFromBytesBE(*reinterpret_cast<std::array<uint8_t, 64>*>(buf + 3*64));
-        eosio::bls_fp_mod(*reinterpret_cast<eosio::bls_s*>(k.data()), t.c1);
+        eosio::bls_fp2 second_field{};
+        second_field[0] = field_elements[2];
+        second_field[1] = field_elements[3];
+        const auto second_point = host_detail::g2_map(second_field);
+        if(!second_point)
+        {
+            return result<validated_g2_affine_le>::failure(
+                bls_errc::host_operation_failed,
+                second_point.error().host_status
+            );
+        }
 
-        eosio::bls_g2_map(t, q);
-        eosio::bls_g2_add(p, q, res);
+        const auto sum = host_detail::g2_add(first_point.value(), second_point.value());
+        if(!sum)
+        {
+            return result<validated_g2_affine_le>::failure(
+                bls_errc::host_operation_failed,
+                sum.error().host_status
+            );
+        }
 
-        return res;
+        g2 point;
+        memcpy(point.data(), sum.value().data(), sizeof(g2));
+        if(point.isIdentity())
+        {
+            return result<validated_g2_affine_le>::failure(bls_errc::identity_point);
+        }
+
+        // Both map operations clear the G2 cofactor in the authoritative host
+        // implementation. Their sum therefore remains in the prime-order subgroup.
+        return result<validated_g2_affine_le>::success(
+            validated_g2_affine_le::from_trusted_point(point)
+        );
+    }
+
+    inline result<validated_g2_affine_le> hash_to_g2(
+        const std::span<const uint8_t> message,
+        const signature_suite suite
+    )
+    {
+        return hash_to_g2(message, ciphersuite_dst(suite));
+    }
+
+    inline g2 fromMessage(const std::vector<uint8_t>& msg, const std::string& dst)
+    {
+        auto hashed = hash_to_g2(std::span<const uint8_t>(msg.data(), msg.size()), std::string_view(dst));
+        eosio::check(hashed.has_value(), "fromMessage: hash_to_g2 failed");
+        return hashed.value().point();
+    }
+
+    inline result<validated_g1_affine_le> aggregate_public_keys(
+        const std::span<const validated_g1_affine_le> keys
+    )
+    {
+        if(keys.empty())
+        {
+            return result<validated_g1_affine_le>::failure(bls_errc::empty_input);
+        }
+        if(!host_detail::valid_count_for_host(keys.size(), sizeof(eosio::bls_g1)) ||
+           !host_detail::valid_count_for_host(keys.size(), sizeof(eosio::bls_scalar)))
+        {
+            return result<validated_g1_affine_le>::failure(bls_errc::count_overflow);
+        }
+
+        std::vector<eosio::bls_g1> host_keys(keys.size());
+        std::vector<eosio::bls_scalar> coefficients(keys.size());
+        const scalar one(1, 0, 0, 0);
+        for(size_t i = 0; i < keys.size(); ++i)
+        {
+            memcpy(host_keys[i].data(), keys[i].point().data(), host_keys[i].size());
+            memcpy(coefficients[i].data(), one.data(), coefficients[i].size());
+        }
+
+        const auto sum = host_detail::g1_weighted_sum(host_keys.data(), coefficients.data(), keys.size());
+        if(!sum)
+        {
+            return result<validated_g1_affine_le>::failure(
+                bls_errc::host_operation_failed,
+                sum.error().host_status
+            );
+        }
+
+        g1 aggregate;
+        memcpy(aggregate.data(), sum.value().data(), sizeof(g1));
+        if(aggregate.isIdentity())
+        {
+            return result<validated_g1_affine_le>::failure(bls_errc::identity_point);
+        }
+
+        return result<validated_g1_affine_le>::success(
+            validated_g1_affine_le::from_trusted_point(aggregate)
+        );
+    }
+
+    inline result<signature_verdict> verify_basic_g2_signature(
+        const validated_g1_affine_le& public_key,
+        const std::span<const uint8_t> message,
+        const validated_g2_affine_le& signature
+    )
+    {
+        const auto hashed_message = hash_to_g2(message, signature_suite::basic);
+        if(!hashed_message)
+        {
+            return result<signature_verdict>::failure(
+                hashed_message.error().code,
+                hashed_message.error().host_status
+            );
+        }
+
+        std::array<eosio::bls_g1, 2> g1_points{};
+        std::array<eosio::bls_g2, 2> g2_points{};
+        memcpy(g1_points[0].data(), g1::BASE_NEG.data(), g1_points[0].size());
+        memcpy(g2_points[0].data(), signature.point().data(), g2_points[0].size());
+        memcpy(g1_points[1].data(), public_key.point().data(), g1_points[1].size());
+        memcpy(g2_points[1].data(), hashed_message.value().point().data(), g2_points[1].size());
+
+        const auto pairing_result = host_detail::pairing(g1_points.data(), g2_points.data(), g1_points.size());
+        if(!pairing_result)
+        {
+            return result<signature_verdict>::failure(
+                bls_errc::host_operation_failed,
+                pairing_result.error().host_status
+            );
+        }
+
+        fp12 product;
+        memcpy(product.data(), pairing_result.value().data(), sizeof(fp12));
+        return result<signature_verdict>::success(
+            product.equal(fp12::one()) ? signature_verdict::valid : signature_verdict::invalid
+        );
+    }
+
+    inline bool equal_binary_messages(const binary_message_view lhs, const binary_message_view rhs)
+    {
+        return lhs.size() == rhs.size() && std::equal(lhs.begin(), lhs.end(), rhs.begin());
+    }
+
+    inline result<signature_verdict> aggregate_verify_basic(
+        const std::span<const validated_g1_affine_le> grouped_public_keys,
+        const std::span<const binary_message_view> messages,
+        const validated_g2_affine_le& aggregate_signature
+    )
+    {
+        if(grouped_public_keys.empty())
+        {
+            return result<signature_verdict>::failure(bls_errc::empty_input);
+        }
+        if(grouped_public_keys.size() != messages.size())
+        {
+            return result<signature_verdict>::failure(bls_errc::length_mismatch);
+        }
+        if(grouped_public_keys.size() >= std::numeric_limits<uint32_t>::max())
+        {
+            return result<signature_verdict>::failure(bls_errc::count_overflow);
+        }
+
+        for(size_t i = 0; i < messages.size(); ++i)
+        {
+            for(size_t j = i + 1; j < messages.size(); ++j)
+            {
+                if(equal_binary_messages(messages[i], messages[j]))
+                {
+                    return result<signature_verdict>::failure(bls_errc::duplicate_message);
+                }
+            }
+        }
+
+        const size_t pairing_count = grouped_public_keys.size() + 1;
+        if(!host_detail::valid_count_for_host(pairing_count, sizeof(eosio::bls_g1)) ||
+           !host_detail::valid_count_for_host(pairing_count, sizeof(eosio::bls_g2)))
+        {
+            return result<signature_verdict>::failure(bls_errc::count_overflow);
+        }
+
+        std::vector<eosio::bls_g1> g1_points(pairing_count);
+        std::vector<eosio::bls_g2> g2_points(pairing_count);
+        memcpy(g1_points[0].data(), g1::BASE_NEG.data(), g1_points[0].size());
+        memcpy(g2_points[0].data(), aggregate_signature.point().data(), g2_points[0].size());
+
+        for(size_t i = 0; i < grouped_public_keys.size(); ++i)
+        {
+            const auto hashed_message = hash_to_g2(messages[i], signature_suite::basic);
+            if(!hashed_message)
+            {
+                return result<signature_verdict>::failure(
+                    hashed_message.error().code,
+                    hashed_message.error().host_status
+                );
+            }
+            memcpy(g1_points[i + 1].data(), grouped_public_keys[i].point().data(), g1_points[i + 1].size());
+            memcpy(g2_points[i + 1].data(), hashed_message.value().point().data(), g2_points[i + 1].size());
+        }
+
+        const auto pairing_result = host_detail::pairing(g1_points.data(), g2_points.data(), pairing_count);
+        if(!pairing_result)
+        {
+            return result<signature_verdict>::failure(
+                bls_errc::host_operation_failed,
+                pairing_result.error().host_status
+            );
+        }
+
+        fp12 product;
+        memcpy(product.data(), pairing_result.value().data(), sizeof(fp12));
+        return result<signature_verdict>::success(
+            product.equal(fp12::one()) ? signature_verdict::valid : signature_verdict::invalid
+        );
     }
 
     namespace groth16

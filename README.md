@@ -137,6 +137,63 @@ Cryptographic callers are responsible for:
 - deploying only to chains with compatible BLS host functions;
 - validating their own proofs, keys, and integration assumptions.
 
+## Checked BLS Signature Boundary
+
+The header exposes the authoritative Basic G2-signature ciphersuite domain-separation tag used by the pinned Antelope BLS implementation:
+
+```cpp
+bls12_381::ciphersuites::basic_signature_g2
+```
+
+For signature verification, use the checked boundary types rather than importing untrusted bytes directly into raw `g1` or `g2` values:
+
+```cpp
+auto public_key = validated_g1_affine_le::fromAffineBytesLE(public_key_bytes);
+auto signature = validated_g2_affine_le::fromAffineBytesLE(signature_bytes);
+
+eosio::check(public_key.has_value(), "invalid BLS public key");
+eosio::check(signature.has_value(), "invalid BLS signature");
+
+auto verdict = verify_basic_g2_signature(
+    public_key.value(),
+    std::span<const uint8_t>(message.data(), message.size()),
+    signature.value()
+);
+
+eosio::check(verdict.has_value(), "BLS verification operation failed");
+eosio::check(verdict.value() == signature_verdict::valid, "invalid BLS signature");
+```
+
+The checked G1/G2 factories require the exact affine little-endian size and reject noncanonical or off-curve input, points outside the prime-order subgroup, and the identity point.
+
+Public keys can be aggregated after validation:
+
+```cpp
+auto aggregate_key = aggregate_public_keys(validated_keys);
+```
+
+Basic aggregate verification accepts one or more **distinct-message groups**:
+
+```cpp
+auto verdict = aggregate_verify_basic(
+    grouped_public_keys,
+    messages,
+    aggregate_signature
+);
+```
+
+The function rejects empty input, mismatched key/message counts, duplicate messages, malformed or non-subgroup points, identity points, and host-operation failures. An ordinary pairing mismatch is returned as `signature_verdict::invalid` rather than as an operational error.
+
+`hash_to_g2(message, dst)` remains available as the generic low-level binary message-to-curve operation. Named Basic verification functions bind the Basic ciphersuite internally so callers cannot accidentally select another DST.
+
+### Compatibility boundary
+
+The new subgroup and identity checks apply only when constructing `validated_g1_affine_le` and `validated_g2_affine_le`, and therefore only to the new signature-facing API.
+
+Existing raw arithmetic, raw affine constructors, and Groth16 verification do **not** gain automatic subgroup or identity checks. Their existing successful behavior and serialized layouts are preserved. Existing host-backed operations now inspect the status returned by the native intrinsic and fail closed instead of consuming an output after host failure.
+
+Protocol-level rules remain the consuming contract's responsibility, including key authorization, policy ordering, duplicate-key policy, thresholds, vote bitsets, and message construction outside the generic BLS scheme.
+
 ## License
 
 MIT License. See [`LICENSE`](LICENSE).
