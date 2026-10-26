@@ -123,6 +123,12 @@ Affine byte parsers are explicitly little-endian. This matches the WASM executio
 
 For the Groth16 public-input vector, the canonical scalar value one is `scalar(1, 0, 0, 0)`. `scalar::one()` represents the Montgomery-domain value used by the library's internal scalar-field arithmetic and is not the leading Groth16 input used by the current contract integration.
 
+### Strict canonical Fr input
+
+For untrusted **32-byte little-endian raw Fr values**, use `scalar::tryFromCanonicalBytesLE(bytes)` (fixed-size `std::span` or `std::vector` overload). It returns `std::nullopt` unless the input is exactly 32 bytes and its unsigned integer value is strictly below `scalar::Q`; it never silently reduces modulo the field modulus. Use `value.isCanonicalRaw()` when the scalar is already known to represent a **raw, non-Montgomery** field encoding. These helpers do not validate other scalar domains or change the permissive legacy `scalar::fromBytesLE()` APIs.
+
+The standalone host boundary regression is `python3 tests/test_scalar_canonical.py` (requires Python 3.7+ and a C++20 compiler). It compiles the new production method bodies, extracted from this header, against a minimal test representation and compares their behavior to an independent Python big-integer oracle. It is **not** a substitute for compiling the complete header with Antelope CDT and running contract integration tests.
+
 For verifying keys stored in `std::vector<uint8_t>`, use the vector overloads of `fromAffineBytesLE()`. They validate the fixed prefix and embedded IC-vector length before delegating to the compatibility-preserving raw-pointer parser. The raw-pointer overloads remain available for existing callers and assume that the caller has already validated the buffer length.
 
 ## Status and Security

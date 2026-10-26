@@ -473,6 +473,41 @@ namespace bls12_381
             memcpy(out.data(), in.data(), 4 * sizeof(uint64_t));
             return out;
         }
+        // Interpret the four limbs as a *raw*, little-endian Fr wire integer.
+        // This is NOT a Montgomery-domain predicate or modular reduction.
+        bool isCanonicalRaw() const
+        {
+            if (w3 != Q.w3) return w3 < Q.w3;
+            if (w2 != Q.w2) return w2 < Q.w2;
+            if (w1 != Q.w1) return w1 < Q.w1;
+            return w0 < Q.w0;
+        }
+
+        // Strict 32-byte little-endian Fr decoding. Unlike fromBytesLE(),
+        // reject noncanonical wire values rather than reducing mod Q.
+        static std::optional<scalar> tryFromCanonicalBytesLE(
+            std::span<const uint8_t, 32> bytes)
+        {
+            scalar out;
+            for (size_t i = 0; i < 4; ++i)
+            {
+                uint64_t limb = 0;
+                for (size_t j = 0; j < 8; ++j)
+                    limb |= static_cast<uint64_t>(bytes[i * 8 + j]) << (8 * j);
+                out[static_cast<int>(i)] = limb;
+            }
+            if (!out.isCanonicalRaw()) return std::nullopt;
+            return out;
+        }
+
+        // The vector overload enforces the *exact* wire length, not >=32.
+        static std::optional<scalar> tryFromCanonicalBytesLE(
+            const std::vector<uint8_t>& bytes)
+        {
+            if (bytes.size() != 32) return std::nullopt;
+            return tryFromCanonicalBytesLE(
+                std::span<const uint8_t, 32>(bytes.data(), 32));
+        }
         bool equal(const scalar& e) const
         {
             return w0 == e.w0 && w1 == e.w1 && w2 == e.w2 && w3 == e.w3;
