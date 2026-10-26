@@ -266,12 +266,6 @@ namespace bls12_381
 
     namespace host_detail
     {
-        template<class T>
-        inline result<T> host_failure(const int32_t status)
-        {
-            return result<T>::failure(bls_errc::host_operation_failed, status);
-        }
-
         inline bool valid_count_for_host(const size_t count, const size_t element_size)
         {
             return count > 0 &&
@@ -279,112 +273,7 @@ namespace bls12_381
                    count <= std::numeric_limits<uint32_t>::max() / element_size;
         }
 
-        inline result<eosio::bls_g1> g1_add(const eosio::bls_g1& lhs, const eosio::bls_g1& rhs)
-        {
-            eosio::bls_g1 out{};
-            const int32_t status = eosio::bls_g1_add(lhs, rhs, out);
-            if(status != 0) return host_failure<eosio::bls_g1>(status);
-            return result<eosio::bls_g1>::success(out);
-        }
 
-        inline result<eosio::bls_g2> g2_add(const eosio::bls_g2& lhs, const eosio::bls_g2& rhs)
-        {
-            eosio::bls_g2 out{};
-            const int32_t status = eosio::bls_g2_add(lhs, rhs, out);
-            if(status != 0) return host_failure<eosio::bls_g2>(status);
-            return result<eosio::bls_g2>::success(out);
-        }
-
-        inline result<eosio::bls_g1> g1_weighted_sum(
-            const eosio::bls_g1 points[],
-            const eosio::bls_scalar scalars[],
-            const size_t count
-        )
-        {
-            if(!valid_count_for_host(count, sizeof(eosio::bls_g1)) ||
-               !valid_count_for_host(count, sizeof(eosio::bls_scalar)))
-            {
-                return result<eosio::bls_g1>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
-            }
-            eosio::bls_g1 out{};
-            const int32_t status = eosio::bls_g1_weighted_sum(points, scalars, static_cast<uint32_t>(count), out);
-            if(status != 0) return host_failure<eosio::bls_g1>(status);
-            return result<eosio::bls_g1>::success(out);
-        }
-
-        inline result<eosio::bls_g2> g2_weighted_sum(
-            const eosio::bls_g2 points[],
-            const eosio::bls_scalar scalars[],
-            const size_t count
-        )
-        {
-            if(!valid_count_for_host(count, sizeof(eosio::bls_g2)) ||
-               !valid_count_for_host(count, sizeof(eosio::bls_scalar)))
-            {
-                return result<eosio::bls_g2>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
-            }
-            eosio::bls_g2 out{};
-            const int32_t status = eosio::bls_g2_weighted_sum(points, scalars, static_cast<uint32_t>(count), out);
-            if(status != 0) return host_failure<eosio::bls_g2>(status);
-            return result<eosio::bls_g2>::success(out);
-        }
-
-        inline result<eosio::bls_gt> pairing(
-            const eosio::bls_g1 g1_points[],
-            const eosio::bls_g2 g2_points[],
-            const size_t count
-        )
-        {
-            if(!valid_count_for_host(count, sizeof(eosio::bls_g1)) ||
-               !valid_count_for_host(count, sizeof(eosio::bls_g2)))
-            {
-                return result<eosio::bls_gt>::failure(count == 0 ? bls_errc::empty_input : bls_errc::count_overflow);
-            }
-            eosio::bls_gt out{};
-            const int32_t status = eosio::bls_pairing(g1_points, g2_points, static_cast<uint32_t>(count), out);
-            if(status != 0) return host_failure<eosio::bls_gt>(status);
-            return result<eosio::bls_gt>::success(out);
-        }
-
-        inline result<eosio::bls_g1> g1_map(const eosio::bls_fp& element)
-        {
-            eosio::bls_g1 out{};
-            const int32_t status = eosio::bls_g1_map(element, out);
-            if(status != 0) return host_failure<eosio::bls_g1>(status);
-            return result<eosio::bls_g1>::success(out);
-        }
-
-        inline result<eosio::bls_g2> g2_map(const eosio::bls_fp2& element)
-        {
-            eosio::bls_g2 out{};
-            const int32_t status = eosio::bls_g2_map(element, out);
-            if(status != 0) return host_failure<eosio::bls_g2>(status);
-            return result<eosio::bls_g2>::success(out);
-        }
-
-        inline result<eosio::bls_fp> fp_mod(const eosio::bls_s& value)
-        {
-            eosio::bls_fp out{};
-            const int32_t status = eosio::bls_fp_mod(value, out);
-            if(status != 0) return host_failure<eosio::bls_fp>(status);
-            return result<eosio::bls_fp>::success(out);
-        }
-
-        inline result<eosio::bls_fp> fp_mul(const eosio::bls_fp& lhs, const eosio::bls_fp& rhs)
-        {
-            eosio::bls_fp out{};
-            const int32_t status = eosio::bls_fp_mul(lhs, rhs, out);
-            if(status != 0) return host_failure<eosio::bls_fp>(status);
-            return result<eosio::bls_fp>::success(out);
-        }
-
-        inline result<eosio::bls_fp> fp_exp(const eosio::bls_fp& base, const eosio::bls_s& exponent)
-        {
-            eosio::bls_fp out{};
-            const int32_t status = eosio::bls_fp_exp(base, exponent, out);
-            if(status != 0) return host_failure<eosio::bls_fp>(status);
-            return result<eosio::bls_fp>::success(out);
-        }
     }
     inline std::array<uint64_t, 8> longScalarFromBytesBE(const std::array<uint8_t, 8*8>& in)
     {
@@ -1318,23 +1207,16 @@ namespace bls12_381
         public:
         static result<validated_g1_affine_le> from_point(const g1& point)
         {
-            eosio::bls_g1 host_point{};
-            memcpy(host_point.data(), point.data(), host_point.size());
             const eosio::bls_g1 identity{};
 
             // Addition with the identity asks the host to parse, canonicalize and
             // curve-check the affine input without changing the represented point.
-            const auto canonical = host_detail::g1_add(host_point, identity);
-            if(!canonical)
-            {
-                return result<validated_g1_affine_le>::failure(
-                    bls_errc::malformed_g1,
-                    canonical.error().host_status
-                );
-            }
-
             g1 checked_point;
-            memcpy(checked_point.data(), canonical.value().data(), sizeof(g1));
+            const int32_t canonical_status = eosio::bls_g1_add(point, identity, checked_point);
+            if(canonical_status != 0)
+            {
+                return result<validated_g1_affine_le>::failure(bls_errc::malformed_g1, canonical_status);
+            }
             if(checked_point.isIdentity())
             {
                 return result<validated_g1_affine_le>::failure(bls_errc::identity_point);
@@ -1342,21 +1224,15 @@ namespace bls12_381
 
             eosio::bls_scalar group_order{};
             memcpy(group_order.data(), scalar::Q.data(), group_order.size());
-            const auto subgroup_product = host_detail::g1_weighted_sum(
-                &canonical.value(),
-                &group_order,
-                1
-            );
-            if(!subgroup_product)
-            {
-                return result<validated_g1_affine_le>::failure(
-                    bls_errc::host_operation_failed,
-                    subgroup_product.error().host_status
-                );
-            }
-
+            const eosio::bls_g1& canonical_host = checked_point;
             g1 subgroup_check;
-            memcpy(subgroup_check.data(), subgroup_product.value().data(), sizeof(g1));
+            const int32_t subgroup_status = eosio::bls_g1_weighted_sum(
+                &canonical_host, &group_order, 1, subgroup_check
+            );
+            if(subgroup_status != 0)
+            {
+                return result<validated_g1_affine_le>::failure(bls_errc::host_operation_failed, subgroup_status);
+            }
             if(!subgroup_check.isIdentity())
             {
                 return result<validated_g1_affine_le>::failure(bls_errc::wrong_subgroup);
@@ -1406,21 +1282,14 @@ namespace bls12_381
         public:
         static result<validated_g2_affine_le> from_point(const g2& point)
         {
-            eosio::bls_g2 host_point{};
-            memcpy(host_point.data(), point.data(), host_point.size());
             const eosio::bls_g2 identity{};
 
-            const auto canonical = host_detail::g2_add(host_point, identity);
-            if(!canonical)
-            {
-                return result<validated_g2_affine_le>::failure(
-                    bls_errc::malformed_g2,
-                    canonical.error().host_status
-                );
-            }
-
             g2 checked_point;
-            memcpy(checked_point.data(), canonical.value().data(), sizeof(g2));
+            const int32_t canonical_status = eosio::bls_g2_add(point, identity, checked_point);
+            if(canonical_status != 0)
+            {
+                return result<validated_g2_affine_le>::failure(bls_errc::malformed_g2, canonical_status);
+            }
             if(checked_point.isIdentity())
             {
                 return result<validated_g2_affine_le>::failure(bls_errc::identity_point);
@@ -1428,21 +1297,15 @@ namespace bls12_381
 
             eosio::bls_scalar group_order{};
             memcpy(group_order.data(), scalar::Q.data(), group_order.size());
-            const auto subgroup_product = host_detail::g2_weighted_sum(
-                &canonical.value(),
-                &group_order,
-                1
-            );
-            if(!subgroup_product)
-            {
-                return result<validated_g2_affine_le>::failure(
-                    bls_errc::host_operation_failed,
-                    subgroup_product.error().host_status
-                );
-            }
-
+            const eosio::bls_g2& canonical_host = checked_point;
             g2 subgroup_check;
-            memcpy(subgroup_check.data(), subgroup_product.value().data(), sizeof(g2));
+            const int32_t subgroup_status = eosio::bls_g2_weighted_sum(
+                &canonical_host, &group_order, 1, subgroup_check
+            );
+            if(subgroup_status != 0)
+            {
+                return result<validated_g2_affine_le>::failure(bls_errc::host_operation_failed, subgroup_status);
+            }
             if(!subgroup_check.isIdentity())
             {
                 return result<validated_g2_affine_le>::failure(bls_errc::wrong_subgroup);
@@ -1622,52 +1485,39 @@ namespace bls12_381
 
             eosio::bls_s wide_scalar{};
             memcpy(wide_scalar.data(), scalar.data(), wide_scalar.size());
-            const auto reduced = host_detail::fp_mod(wide_scalar);
-            if(!reduced)
+            const int32_t status = eosio::bls_fp_mod(wide_scalar, field_elements[i]);
+            if(status != 0)
             {
-                return result<validated_g2_affine_le>::failure(
-                    bls_errc::host_operation_failed,
-                    reduced.error().host_status
-                );
+                return result<validated_g2_affine_le>::failure(bls_errc::host_operation_failed, status);
             }
-            field_elements[i] = reduced.value();
         }
 
         eosio::bls_fp2 first_field{};
         first_field[0] = field_elements[0];
         first_field[1] = field_elements[1];
-        const auto first_point = host_detail::g2_map(first_field);
-        if(!first_point)
+        g2 first_point;
+        const int32_t first_status = eosio::bls_g2_map(first_field, first_point);
+        if(first_status != 0)
         {
-            return result<validated_g2_affine_le>::failure(
-                bls_errc::host_operation_failed,
-                first_point.error().host_status
-            );
+            return result<validated_g2_affine_le>::failure(bls_errc::host_operation_failed, first_status);
         }
 
         eosio::bls_fp2 second_field{};
         second_field[0] = field_elements[2];
         second_field[1] = field_elements[3];
-        const auto second_point = host_detail::g2_map(second_field);
-        if(!second_point)
+        g2 second_point;
+        const int32_t second_status = eosio::bls_g2_map(second_field, second_point);
+        if(second_status != 0)
         {
-            return result<validated_g2_affine_le>::failure(
-                bls_errc::host_operation_failed,
-                second_point.error().host_status
-            );
-        }
-
-        const auto sum = host_detail::g2_add(first_point.value(), second_point.value());
-        if(!sum)
-        {
-            return result<validated_g2_affine_le>::failure(
-                bls_errc::host_operation_failed,
-                sum.error().host_status
-            );
+            return result<validated_g2_affine_le>::failure(bls_errc::host_operation_failed, second_status);
         }
 
         g2 point;
-        memcpy(point.data(), sum.value().data(), sizeof(g2));
+        const int32_t sum_status = eosio::bls_g2_add(first_point, second_point, point);
+        if(sum_status != 0)
+        {
+            return result<validated_g2_affine_le>::failure(bls_errc::host_operation_failed, sum_status);
+        }
         if(point.isIdentity())
         {
             return result<validated_g2_affine_le>::failure(bls_errc::identity_point);
@@ -1718,17 +1568,14 @@ namespace bls12_381
             memcpy(coefficients[i].data(), one.data(), coefficients[i].size());
         }
 
-        const auto sum = host_detail::g1_weighted_sum(host_keys.data(), coefficients.data(), keys.size());
-        if(!sum)
-        {
-            return result<validated_g1_affine_le>::failure(
-                bls_errc::host_operation_failed,
-                sum.error().host_status
-            );
-        }
-
         g1 aggregate;
-        memcpy(aggregate.data(), sum.value().data(), sizeof(g1));
+        const int32_t status = eosio::bls_g1_weighted_sum(
+            host_keys.data(), coefficients.data(), static_cast<uint32_t>(keys.size()), aggregate
+        );
+        if(status != 0)
+        {
+            return result<validated_g1_affine_le>::failure(bls_errc::host_operation_failed, status);
+        }
         if(aggregate.isIdentity())
         {
             return result<validated_g1_affine_le>::failure(bls_errc::identity_point);
@@ -1761,17 +1608,14 @@ namespace bls12_381
         memcpy(g1_points[1].data(), public_key.point().data(), g1_points[1].size());
         memcpy(g2_points[1].data(), hashed_message.value().point().data(), g2_points[1].size());
 
-        const auto pairing_result = host_detail::pairing(g1_points.data(), g2_points.data(), g1_points.size());
-        if(!pairing_result)
-        {
-            return result<signature_verdict>::failure(
-                bls_errc::host_operation_failed,
-                pairing_result.error().host_status
-            );
-        }
-
         fp12 product;
-        memcpy(product.data(), pairing_result.value().data(), sizeof(fp12));
+        const int32_t status = eosio::bls_pairing(
+            g1_points.data(), g2_points.data(), static_cast<uint32_t>(g1_points.size()), product
+        );
+        if(status != 0)
+        {
+            return result<signature_verdict>::failure(bls_errc::host_operation_failed, status);
+        }
         return result<signature_verdict>::success(
             product.equal(fp12::one()) ? signature_verdict::valid : signature_verdict::invalid
         );
@@ -1838,17 +1682,14 @@ namespace bls12_381
             memcpy(g2_points[i + 1].data(), hashed_message.value().point().data(), g2_points[i + 1].size());
         }
 
-        const auto pairing_result = host_detail::pairing(g1_points.data(), g2_points.data(), pairing_count);
-        if(!pairing_result)
-        {
-            return result<signature_verdict>::failure(
-                bls_errc::host_operation_failed,
-                pairing_result.error().host_status
-            );
-        }
-
         fp12 product;
-        memcpy(product.data(), pairing_result.value().data(), sizeof(fp12));
+        const int32_t status = eosio::bls_pairing(
+            g1_points.data(), g2_points.data(), static_cast<uint32_t>(pairing_count), product
+        );
+        if(status != 0)
+        {
+            return result<signature_verdict>::failure(bls_errc::host_operation_failed, status);
+        }
         return result<signature_verdict>::success(
             product.equal(fp12::one()) ? signature_verdict::valid : signature_verdict::invalid
         );
