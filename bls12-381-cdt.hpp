@@ -883,10 +883,9 @@ namespace bls12_381
         }
         static fp modPrime(const std::array<uint64_t, 8>& k)
         {
-            const auto checked = host_detail::fp_mod(*reinterpret_cast<const eosio::bls_s*>(&k));
-            eosio::check(checked.has_value(), "fp::modPrime: bls_fp_mod failed");
             fp out;
-            memcpy(out.data(), checked.value().data(), sizeof(fp));
+            const int32_t status = eosio::bls_fp_mod(*reinterpret_cast<const eosio::bls_s*>(&k), out);
+            eosio::check(status == 0, "fp::modPrime: bls_fp_mod failed");
             return out;
         }
 
@@ -1116,10 +1115,9 @@ namespace bls12_381
         }
         g1 add(const g1& e) const
         {
-            const auto checked = host_detail::g1_add(*this, e);
-            eosio::check(checked.has_value(), "g1::add: bls_g1_add failed");
             g1 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g1));
+            const int32_t status = eosio::bls_g1_add(*this, e, out);
+            eosio::check(status == 0, "g1::add: bls_g1_add failed");
             return out;
         }
         g1 dbl() const
@@ -1143,34 +1141,38 @@ namespace bls12_381
         }
         g1 mulScalar(const scalar& s) const
         {
-            const auto checked = host_detail::g1_weighted_sum(
+            g1 out;
+            const int32_t status = eosio::bls_g1_weighted_sum(
                 reinterpret_cast<const eosio::bls_g1*>(this->data()),
                 reinterpret_cast<const eosio::bls_scalar*>(s.data()),
-                1
+                1,
+                out
             );
-            eosio::check(checked.has_value(), "g1::mulScalar: bls_g1_weighted_sum failed");
-            g1 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g1));
+            eosio::check(status == 0, "g1::mulScalar: bls_g1_weighted_sum failed");
             return out;
         }
         static g1 multiExp(const g1 points[], const scalar scalars[], const uint32_t num)
         {
-            const auto checked = host_detail::g1_weighted_sum(
+            eosio::check(
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_g1)) &&
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_scalar)),
+                "g1::multiExp: invalid point count"
+            );
+            g1 out;
+            const int32_t status = eosio::bls_g1_weighted_sum(
                 reinterpret_cast<const eosio::bls_g1*>(points),
                 reinterpret_cast<const eosio::bls_scalar*>(scalars),
-                num
+                num,
+                out
             );
-            eosio::check(checked.has_value(), "g1::multiExp: bls_g1_weighted_sum failed");
-            g1 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g1));
+            eosio::check(status == 0, "g1::multiExp: bls_g1_weighted_sum failed");
             return out;
         }
         static g1 mapToCurve(const fp& e)
         {
-            const auto checked = host_detail::g1_map(e);
-            eosio::check(checked.has_value(), "g1::mapToCurve: bls_g1_map failed");
             g1 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g1));
+            const int32_t status = eosio::bls_g1_map(e, out);
+            eosio::check(status == 0, "g1::mapToCurve: bls_g1_map failed");
             return out;
         }
 
@@ -1240,10 +1242,9 @@ namespace bls12_381
         }
         g2 add(const g2& e) const
         {
-            const auto checked = host_detail::g2_add(*this, e);
-            eosio::check(checked.has_value(), "g2::add: bls_g2_add failed");
             g2 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g2));
+            const int32_t status = eosio::bls_g2_add(*this, e, out);
+            eosio::check(status == 0, "g2::add: bls_g2_add failed");
             return out;
         }
         g2 dbl() const
@@ -1263,34 +1264,38 @@ namespace bls12_381
         }
         g2 mulScalar(const scalar& s) const
         {
-            const auto checked = host_detail::g2_weighted_sum(
+            g2 out;
+            const int32_t status = eosio::bls_g2_weighted_sum(
                 reinterpret_cast<const eosio::bls_g2*>(this->data()),
                 reinterpret_cast<const eosio::bls_scalar*>(s.data()),
-                1
+                1,
+                out
             );
-            eosio::check(checked.has_value(), "g2::mulScalar: bls_g2_weighted_sum failed");
-            g2 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g2));
+            eosio::check(status == 0, "g2::mulScalar: bls_g2_weighted_sum failed");
             return out;
         }
         static g2 multiExp(const g2 points[], const scalar scalars[], const uint32_t num)
         {
-            const auto checked = host_detail::g2_weighted_sum(
+            eosio::check(
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_g2)) &&
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_scalar)),
+                "g2::multiExp: invalid point count"
+            );
+            g2 out;
+            const int32_t status = eosio::bls_g2_weighted_sum(
                 reinterpret_cast<const eosio::bls_g2*>(points),
                 reinterpret_cast<const eosio::bls_scalar*>(scalars),
-                num
+                num,
+                out
             );
-            eosio::check(checked.has_value(), "g2::multiExp: bls_g2_weighted_sum failed");
-            g2 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g2));
+            eosio::check(status == 0, "g2::multiExp: bls_g2_weighted_sum failed");
             return out;
         }
         static g2 mapToCurve(const fp2& e)
         {
-            const auto checked = host_detail::g2_map(e);
-            eosio::check(checked.has_value(), "g2::mapToCurve: bls_g2_map failed");
             g2 out;
-            memcpy(out.data(), checked.value().data(), sizeof(g2));
+            const int32_t status = eosio::bls_g2_map(e, out);
+            eosio::check(status == 0, "g2::mapToCurve: bls_g2_map failed");
             return out;
         }
 
@@ -1490,14 +1495,19 @@ namespace bls12_381
     {
         inline fp12 calculate(const g1 g1_points[], const g2 g2_points[], const uint32_t num)
         {
-            const auto checked = host_detail::pairing(
+            eosio::check(
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_g1)) &&
+                host_detail::valid_count_for_host(num, sizeof(eosio::bls_g2)),
+                "pairing::calculate: invalid point count"
+            );
+            fp12 f;
+            const int32_t status = eosio::bls_pairing(
                 reinterpret_cast<const eosio::bls_g1*>(g1_points),
                 reinterpret_cast<const eosio::bls_g2*>(g2_points),
-                num
+                num,
+                f
             );
-            eosio::check(checked.has_value(), "pairing::calculate: bls_pairing failed");
-            fp12 f;
-            memcpy(f.data(), checked.value().data(), sizeof(fp12));
+            eosio::check(status == 0, "pairing::calculate: bls_pairing failed");
             return f;
         }
     }
